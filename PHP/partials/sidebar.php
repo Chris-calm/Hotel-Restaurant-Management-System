@@ -12,8 +12,8 @@ $currentUserRole = $_SESSION['role'] ?? 'staff';
 ?>
 <section id="sidebar">
     <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/Dashboard.php" class="brand">
-        <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PICTURES/hms-logo.svg" alt="Hotel Management System Logo" class="brand-logo" style="width: 48px; height: 48px;">
-        <span class="text" style="font-size: 14px; font-weight: 600;">Hotel Management System</span>
+        <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PICTURES/hotel-ser-logo.png" alt="Hotel Ser Reposer Et Diner Logo" class="brand-logo" style="width: 48px; height: 48px;">
+        <span class="text" style="font-size: 14px; font-weight: 600;">Hotel Ser Reposer Et Diner</span>
     </a>
 
     <div class="profile-status">
@@ -56,16 +56,6 @@ $currentUserRole = $_SESSION['role'] ?? 'staff';
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/marketing_promotions.php"><span class="text">Marketing & Promotions</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/analytics_reporting.php"><span class="text">Analytics & Reporting</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/events_conferences.php"><span class="text">Events & Conferences</span></a></li>
-            </ul>
-        </li>
-
-        <li class="dropdown">
-            <a href="#" class="dropdown-toggle">
-                <i class='bx bxs-store'></i>
-                <span class="text">Restaurant Core Modules</span>
-                <i class='bx bx-chevron-down arrow'></i>
-            </a>
-            <ul class="dropdown-menu">
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/billing_payments.php"><span class="text">Billing & Payments</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/pos.php"><span class="text">Point of Sale (POS)</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/inventory_stock.php"><span class="text">Inventory & Stock</span></a></li>

@@ -407,6 +407,65 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS reservation_folio_charges (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  reservation_id INT UNSIGNED NULL,
+  guest_id INT UNSIGNED NULL,
+  charge_type ENUM('Room','POS','Event','Other','Adjustment') NOT NULL DEFAULT 'Other',
+  source_id INT UNSIGNED NULL,
+  description VARCHAR(255) NOT NULL,
+  amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_folio_charge_reservation
+    FOREIGN KEY (reservation_id) REFERENCES reservations(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_folio_charge_guest
+    FOREIGN KEY (guest_id) REFERENCES guests(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_folio_charge_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS reservation_payments (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  reservation_id INT UNSIGNED NULL,
+  guest_id INT UNSIGNED NULL,
+  payment_type ENUM('Payment','Refund','Adjustment') NOT NULL DEFAULT 'Payment',
+  method ENUM('Cash','Card','GCash','Bank Transfer') NULL,
+  reference VARCHAR(80) NULL,
+  amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  status ENUM('Posted','Voided') NOT NULL DEFAULT 'Posted',
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_res_pay_reservation
+    FOREIGN KEY (reservation_id) REFERENCES reservations(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_res_pay_guest
+    FOREIGN KEY (guest_id) REFERENCES guests(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_res_pay_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS loyalty_transactions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  guest_id INT UNSIGNED NOT NULL,
+  txn_type ENUM('Earn','Redeem','Adjust') NOT NULL,
+  points INT NOT NULL,
+  reference VARCHAR(80) NULL,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_loyalty_txn_guest
+    FOREIGN KEY (guest_id) REFERENCES guests(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_loyalty_txn_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS function_rooms (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(80) NOT NULL UNIQUE,
