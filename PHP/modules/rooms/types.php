@@ -15,6 +15,8 @@ $pageTitle = 'Room Types - Hotel Management System';
 $pendingApprovals = [];
 $flash = Flash::get();
 
+$APP_BASE_URL = App::baseUrl();
+
 include __DIR__ . '/../../partials/page_start.php';
 include __DIR__ . '/../../partials/sidebar.php';
 ?>
@@ -46,6 +48,7 @@ include __DIR__ . '/../../partials/sidebar.php';
                 <table class="w-full">
                     <thead class="bg-gray-50">
                         <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Image</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Base Rate</th>
@@ -57,11 +60,18 @@ include __DIR__ . '/../../partials/sidebar.php';
                     <tbody class="bg-white divide-y divide-gray-200">
                         <?php if (empty($types)): ?>
                             <tr>
-                                <td colspan="6" class="px-6 py-10 text-center text-gray-500">No room types found.</td>
+                                <td colspan="7" class="px-6 py-10 text-center text-gray-500">No room types found.</td>
                             </tr>
                         <?php else: ?>
                             <?php foreach ($types as $t): ?>
                                 <tr class="hover:bg-gray-50">
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        <?php if (trim((string)($t['image_path'] ?? '')) !== ''): ?>
+                                            <img src="<?= htmlspecialchars($APP_BASE_URL . (string)$t['image_path']) ?>" alt="" style="height:42px;width:70px;object-fit:cover;border-radius:8px;" />
+                                        <?php else: ?>
+                                            <span class="text-xs text-gray-400">No image</span>
+                                        <?php endif; ?>
+                                    </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"><?= htmlspecialchars($t['code'] ?? '') ?></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($t['name'] ?? '') ?></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars((string)($t['base_rate'] ?? '0.00')) ?></td>

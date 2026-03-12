@@ -5,10 +5,72 @@ require_once __DIR__ . '/../../core/Database.php';
 final class HousekeepingRepository
 {
     private ?mysqli $conn;
+    private ?bool $hasRoomImageColumn = null;
+    private ?bool $hasRoomTypeImageColumn = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasRoomImageColumn(): bool
+    {
+        if ($this->hasRoomImageColumn !== null) {
+            return $this->hasRoomImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasRoomImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasRoomImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'rooms'
+               AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasRoomImageColumn = ($count === 1);
+        return $this->hasRoomImageColumn;
+    }
+
+    private function hasRoomTypeImageColumn(): bool
+    {
+        if ($this->hasRoomTypeImageColumn !== null) {
+            return $this->hasRoomTypeImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasRoomTypeImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasRoomTypeImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'room_types'
+               AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasRoomTypeImageColumn = ($count === 1);
+        return $this->hasRoomTypeImageColumn;
     }
 
     public function listRooms(string $q = ''): array
@@ -19,7 +81,12 @@ final class HousekeepingRepository
 
         $q = trim($q);
         if ($q === '') {
+            $imgSelect = $this->hasRoomImageColumn() ? 'r.image_path AS room_image_path,' : 'NULL AS room_image_path,';
+            $rtImgSelect = $this->hasRoomTypeImageColumn() ? 'rt.image_path AS room_type_image_path,' : 'NULL AS room_type_image_path,';
+
             $sql = "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id,
+                           {$imgSelect}
+                           {$rtImgSelect}
                            rt.code AS room_type_code, rt.name AS room_type_name
                     FROM rooms r
                     JOIN room_types rt ON rt.id = r.room_type_id
@@ -36,8 +103,12 @@ final class HousekeepingRepository
         }
 
         $like = '%' . $q . '%';
+        $imgSelect = $this->hasRoomImageColumn() ? 'r.image_path AS room_image_path,' : 'NULL AS room_image_path,';
+        $rtImgSelect = $this->hasRoomTypeImageColumn() ? 'rt.image_path AS room_type_image_path,' : 'NULL AS room_type_image_path,';
         $stmt = $this->conn->prepare(
             "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id,
+                    {$imgSelect}
+                    {$rtImgSelect}
                     rt.code AS room_type_code, rt.name AS room_type_name
              FROM rooms r
              JOIN room_types rt ON rt.id = r.room_type_id
@@ -66,10 +137,15 @@ final class HousekeepingRepository
 
         $limit = max(1, min(500, $limit));
 
+        $imgSelect = $this->hasRoomImageColumn() ? 'rooms.image_path AS room_image_path,' : 'NULL AS room_image_path,';
+        $rtImgSelect = $this->hasRoomTypeImageColumn() ? 'rt.image_path AS room_type_image_path,' : 'NULL AS room_type_image_path,';
+
         $sql =
             "SELECT t.id, t.room_id, t.task_type, t.status, t.priority, t.assigned_to,
                     t.started_at, t.completed_at, t.notes, t.created_at,
                     rooms.room_no,
+                    {$imgSelect}
+                    {$rtImgSelect}
                     rt.name AS room_type_name
              FROM housekeeping_tasks t
              INNER JOIN rooms ON rooms.id = t.room_id

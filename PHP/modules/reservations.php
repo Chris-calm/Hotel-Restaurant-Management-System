@@ -84,72 +84,87 @@ include __DIR__ . '/../partials/sidebar.php';
                 <div class="text-xs text-gray-500">Showing up to 200 records</div>
             </div>
 
-            <div class="overflow-x-auto">
-                <table class="min-w-full text-sm">
-                    <thead>
-                        <tr class="text-left text-gray-500 border-b">
-                            <th class="py-2 pr-4 font-medium">Reference</th>
-                            <th class="py-2 pr-4 font-medium">Guest</th>
-                            <th class="py-2 pr-4 font-medium">Room</th>
-                            <th class="py-2 pr-4 font-medium">Dates</th>
-                            <th class="py-2 pr-4 font-medium">Deposit</th>
-                            <th class="py-2 pr-4 font-medium">Status</th>
-                            <th class="py-2 pr-4 font-medium">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if (empty($rows)): ?>
-                            <tr>
-                                <td colspan="7" class="py-6 text-center text-gray-500">No reservations found.</td>
-                            </tr>
-                        <?php endif; ?>
+            <?php if (empty($rows)): ?>
+                <div class="py-10 text-center text-gray-500 text-sm">No reservations found.</div>
+            <?php else: ?>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <?php foreach ($rows as $r): ?>
+                        <?php
+                            $status = (string)($r['status'] ?? '');
+                            $badge = 'border-gray-200 bg-gray-50 text-gray-700';
+                            if ($status === 'Confirmed' || $status === 'Upcoming') {
+                                $badge = 'border-blue-200 bg-blue-50 text-blue-700';
+                            } elseif ($status === 'Checked In') {
+                                $badge = 'border-green-200 bg-green-50 text-green-700';
+                            } elseif ($status === 'Completed') {
+                                $badge = 'border-gray-200 bg-white text-gray-900';
+                            } elseif ($status === 'Cancelled' || $status === 'No Show') {
+                                $badge = 'border-red-200 bg-red-50 text-red-700';
+                            }
 
-                        <?php foreach ($rows as $r): ?>
-                            <tr class="border-b hover:bg-gray-50">
-                                <td class="py-3 pr-4">
-                                    <div class="font-medium text-gray-900"><?= htmlspecialchars($r['reference_no'] ?? '') ?></div>
-                                    <div class="text-xs text-gray-500"><?= htmlspecialchars($r['created_at'] ?? '') ?></div>
-                                </td>
-                                <td class="py-3 pr-4">
-                                    <div class="text-gray-900"><?= htmlspecialchars(trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? ''))) ?></div>
-                                    <div class="text-xs text-gray-500"><?= htmlspecialchars($r['phone'] ?? '') ?></div>
-                                    <div class="text-xs text-gray-500"><?= htmlspecialchars($r['email'] ?? '') ?></div>
+                            $guestName = trim((string)($r['first_name'] ?? '') . ' ' . (string)($r['last_name'] ?? ''));
+                            $roomLabel = ($r['room_no'] ?? '-') !== '' ? ('Room ' . ($r['room_no'] ?? '-')) : '-';
+                        ?>
+                        <div class="rounded-xl border border-gray-100 bg-white p-4">
+                            <div class="flex items-start justify-between gap-3">
+                                <div>
+                                    <div class="text-xs text-gray-500">Reference</div>
+                                    <div class="text-sm font-semibold text-gray-900 mt-1"><?= htmlspecialchars($r['reference_no'] ?? '') ?></div>
+                                    <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars($r['created_at'] ?? '') ?></div>
+                                </div>
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>">
+                                    <?= htmlspecialchars($status) ?>
+                                </span>
+                            </div>
+
+                            <div class="mt-4 grid grid-cols-1 gap-3">
+                                <div>
+                                    <div class="text-xs text-gray-500">Guest</div>
+                                    <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars($guestName) ?></div>
+                                    <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($r['phone'] ?? '')) ?></div>
                                     <?php if (trim((string)($r['id_type'] ?? '')) !== '' || trim((string)($r['id_number'] ?? '')) !== ''): ?>
-                                        <div class="text-xs text-gray-500"><?= htmlspecialchars(trim((string)($r['id_type'] ?? '') . ' ' . (string)($r['id_number'] ?? ''))) ?></div>
+                                        <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars(trim((string)($r['id_type'] ?? '') . ' ' . (string)($r['id_number'] ?? ''))) ?></div>
                                     <?php endif; ?>
                                     <?php if (trim((string)($r['id_photo_path'] ?? '')) !== ''): ?>
-                                        <div class="text-xs text-gray-500">
+                                        <div class="text-xs text-gray-500 mt-1">
                                             <a class="text-blue-600 hover:underline" target="_blank" href="<?= htmlspecialchars($APP_BASE_URL . (string)$r['id_photo_path']) ?>">Open ID photo</a>
                                         </div>
                                     <?php endif; ?>
-                                </td>
-                                <td class="py-3 pr-4">
-                                    <div class="text-gray-900"><?= htmlspecialchars(($r['room_no'] ?? '-') !== '' ? ('Room ' . ($r['room_no'] ?? '-')) : '-') ?></div>
-                                    <div class="text-xs text-gray-500"><?= htmlspecialchars($r['room_type_name'] ?? '') ?></div>
-                                </td>
-                                <td class="py-3 pr-4">
-                                    <div class="text-gray-900"><?= htmlspecialchars($r['checkin_date'] ?? '') ?> → <?= htmlspecialchars($r['checkout_date'] ?? '') ?></div>
-                                </td>
-                                <td class="py-3 pr-4">
-                                    <div class="text-gray-900">₱<?= number_format((float)($r['deposit_amount'] ?? 0), 2) ?></div>
-                                    <div class="text-xs text-gray-500"><?= htmlspecialchars($r['payment_method'] ?? '') ?></div>
-                                </td>
-                                <td class="py-3 pr-4">
-                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-200 bg-gray-50 text-gray-700">
-                                        <?= htmlspecialchars($r['status'] ?? '') ?>
-                                    </span>
-                                </td>
-                                <td class="py-3 pr-4">
-                                    <div class="flex items-center gap-2">
-                                        <a href="reservations_view.php?id=<?= (int)$r['id'] ?>" class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">View</a>
-                                        <a href="front_desk_receipt.php?id=<?= (int)$r['id'] ?>" class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Receipt</a>
+                                </div>
+
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <div class="text-xs text-gray-500">Room</div>
+                                        <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars($roomLabel) ?></div>
+                                        <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($r['room_type_name'] ?? '')) ?></div>
                                     </div>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
+                                    <div>
+                                        <div class="text-xs text-gray-500">Dates</div>
+                                        <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars((string)($r['checkin_date'] ?? '')) ?></div>
+                                        <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars((string)($r['checkout_date'] ?? '')) ?></div>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div class="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                                        <div class="text-xs text-gray-500">Deposit</div>
+                                        <div class="text-sm font-medium text-gray-900 mt-1">₱<?= number_format((float)($r['deposit_amount'] ?? 0), 2) ?></div>
+                                    </div>
+                                    <div class="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                                        <div class="text-xs text-gray-500">Payment</div>
+                                        <div class="text-sm font-medium text-gray-900 mt-1"><?= htmlspecialchars((string)($r['payment_method'] ?? '')) ?></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mt-4 flex items-center gap-2">
+                                <a href="reservations_view.php?id=<?= (int)$r['id'] ?>" class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">View</a>
+                                <a href="front_desk_receipt.php?id=<?= (int)$r['id'] ?>" class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Receipt</a>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
         </div>
     </main>
 </section>

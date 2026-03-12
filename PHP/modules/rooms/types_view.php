@@ -19,6 +19,8 @@ $pageTitle = 'Room Type - Hotel Management System';
 $pendingApprovals = [];
 $flash = Flash::get();
 
+$APP_BASE_URL = App::baseUrl();
+
 include __DIR__ . '/../../partials/page_start.php';
 include __DIR__ . '/../../partials/sidebar.php';
 ?>
@@ -70,6 +72,17 @@ include __DIR__ . '/../../partials/sidebar.php';
                 <div class="text-xs text-gray-500 uppercase tracking-wider">Created At</div>
                 <div class="text-sm text-gray-900 mt-1"><?= !empty($type['created_at']) ? htmlspecialchars($type['created_at']) : '' ?></div>
             </div>
+            <?php if (trim((string)($type['image_path'] ?? '')) !== ''): ?>
+                <div class="md:col-span-2">
+                    <div class="text-xs text-gray-500 uppercase tracking-wider">Image</div>
+                    <div class="mt-2">
+                        <a class="text-blue-600 hover:underline text-sm" target="_blank" href="<?= htmlspecialchars($APP_BASE_URL . (string)$type['image_path']) ?>">Open image</a>
+                    </div>
+                    <div class="mt-2">
+                        <img src="<?= htmlspecialchars($APP_BASE_URL . (string)$type['image_path']) ?>" alt="Room type image" style="max-height:260px;" />
+                    </div>
+                </div>
+            <?php endif; ?>
         </div>
 
         <div class="mt-6">

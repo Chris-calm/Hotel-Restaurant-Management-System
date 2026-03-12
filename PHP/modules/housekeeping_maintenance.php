@@ -19,6 +19,8 @@ $maintenanceService = new MaintenanceService(
 
 $pendingApprovals = [];
 
+$APP_BASE_URL = App::baseUrl();
+
 $tab = (string)Request::get('tab', 'housekeeping');
 
 $roomQ = (string)Request::get('room_q', '');
@@ -199,28 +201,72 @@ include __DIR__ . '/../partials/sidebar.php';
                     <?php endif; ?>
 
                     <?php foreach ($tasks as $t): ?>
-                        <div class="rounded-lg border border-gray-100 p-4">
-                            <div class="flex items-start justify-between gap-4">
-                                <div>
-                                    <div class="text-sm font-medium text-gray-900"><?= htmlspecialchars('Room ' . ($t['room_no'] ?? '')) ?> • <?= htmlspecialchars($t['room_type_name'] ?? '') ?></div>
-                                    <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars(($t['task_type'] ?? '') . ' • ' . ($t['priority'] ?? '') . ' • ' . ($t['status'] ?? '')) ?></div>
-                                    <?php if (trim((string)($t['notes'] ?? '')) !== ''): ?>
-                                        <div class="text-xs text-gray-600 mt-2"><?= nl2br(htmlspecialchars($t['notes'])) ?></div>
+                        <?php
+                            $taskStatus = (string)($t['status'] ?? '');
+                            $taskPriority = (string)($t['priority'] ?? '');
+                            $badge = 'border-gray-200 bg-gray-50 text-gray-700';
+                            if ($taskStatus === 'In Progress') {
+                                $badge = 'border-blue-200 bg-blue-50 text-blue-700';
+                            }
+
+                            $pBadge = 'border-gray-200 bg-white text-gray-700';
+                            if ($taskPriority === 'High') {
+                                $pBadge = 'border-red-200 bg-red-50 text-red-700';
+                            } elseif ($taskPriority === 'Low') {
+                                $pBadge = 'border-gray-200 bg-gray-50 text-gray-700';
+                            }
+
+                            $img = '';
+                            if (trim((string)($t['room_image_path'] ?? '')) !== '') {
+                                $img = (string)$t['room_image_path'];
+                            } elseif (trim((string)($t['room_type_image_path'] ?? '')) !== '') {
+                                $img = (string)$t['room_type_image_path'];
+                            }
+                        ?>
+                        <div class="rounded-xl border border-gray-100 overflow-hidden bg-white">
+                            <div class="flex items-stretch">
+                                <div class="w-28 bg-gray-50 flex items-center justify-center">
+                                    <?php if ($img !== ''): ?>
+                                        <img src="<?= htmlspecialchars($APP_BASE_URL . $img) ?>" alt="" style="height:100%;width:100%;object-fit:cover;" />
+                                    <?php else: ?>
+                                        <div class="text-xs text-gray-400">No image</div>
                                     <?php endif; ?>
                                 </div>
-                                <div class="flex items-center gap-2">
-                                    <form method="post">
-                                        <input type="hidden" name="action" value="set_task_status" />
-                                        <input type="hidden" name="task_id" value="<?= (int)$t['id'] ?>" />
-                                        <input type="hidden" name="status" value="In Progress" />
-                                        <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Start</button>
-                                    </form>
-                                    <form method="post">
-                                        <input type="hidden" name="action" value="set_task_status" />
-                                        <input type="hidden" name="task_id" value="<?= (int)$t['id'] ?>" />
-                                        <input type="hidden" name="status" value="Done" />
-                                        <button class="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700 transition">Done</button>
-                                    </form>
+                                <div class="flex-1 p-4">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-medium text-gray-900"><?= htmlspecialchars('Room ' . ($t['room_no'] ?? '')) ?> • <?= htmlspecialchars($t['room_type_name'] ?? '') ?></div>
+                                            <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($t['task_type'] ?? '')) ?></div>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>"><?= htmlspecialchars($taskStatus) ?></span>
+                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($pBadge) ?>"><?= htmlspecialchars($taskPriority) ?></span>
+                                        </div>
+                                    </div>
+                                    <?php if (trim((string)($t['notes'] ?? '')) !== ''): ?>
+                                        <div class="text-xs text-gray-600 mt-3"><?= nl2br(htmlspecialchars($t['notes'])) ?></div>
+                                    <?php endif; ?>
+
+                                    <div class="mt-4 flex items-center gap-2 flex-wrap">
+                                        <form method="post">
+                                            <input type="hidden" name="action" value="set_task_status" />
+                                            <input type="hidden" name="task_id" value="<?= (int)$t['id'] ?>" />
+                                            <input type="hidden" name="status" value="In Progress" />
+                                            <button class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Start</button>
+                                        </form>
+                                        <form method="post">
+                                            <input type="hidden" name="action" value="set_task_status" />
+                                            <input type="hidden" name="task_id" value="<?= (int)$t['id'] ?>" />
+                                            <input type="hidden" name="status" value="Done" />
+                                            <button class="px-3 py-2 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700 transition">Done</button>
+                                        </form>
+
+                                        <button
+                                            type="button"
+                                            class="px-3 py-2 rounded-lg border border-red-200 text-red-700 text-xs hover:bg-red-50 transition"
+                                            onclick="openIssueModal(<?= (int)$t['room_id'] ?>, 'Room <?= htmlspecialchars((string)($t['room_no'] ?? ''), ENT_QUOTES) ?> - Issue Report')"
+                                        >Send to Maintenance</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -286,6 +332,88 @@ include __DIR__ . '/../partials/sidebar.php';
                 </form>
             </div>
         </div>
+
+        <div id="issueModal" class="fixed inset-0 z-50 hidden items-center justify-center p-4" aria-hidden="true">
+            <div class="absolute inset-0 bg-black/40" onclick="closeIssueModal()"></div>
+            <div class="relative w-full max-w-xl bg-white rounded-2xl shadow-lg overflow-hidden max-h-[90vh] overflow-y-auto">
+                <div class="p-6">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="text-lg font-medium text-gray-900">Create Maintenance Ticket</div>
+                            <div class="text-sm text-gray-500 mt-1">Only create a ticket when something needs fixing</div>
+                        </div>
+                        <button type="button" class="text-gray-500 hover:text-gray-900" onclick="closeIssueModal()">✕</button>
+                    </div>
+
+                    <form method="post" class="mt-5 space-y-4">
+                        <input type="hidden" name="action" value="create_maintenance_ticket" />
+                        <input type="hidden" name="room_id" id="issue_room_id" value="0" />
+                        <input type="hidden" name="asset_id" value="0" />
+                        <input type="hidden" name="category_id" value="0" />
+                        <input type="hidden" name="assigned_to" value="0" />
+                        <input type="hidden" name="vendor_id" value="0" />
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+                            <select name="priority" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                                <?php foreach (MaintenanceService::allowedPriorities() as $p): ?>
+                                    <option value="<?= htmlspecialchars($p) ?>" <?= $p === 'Normal' ? 'selected' : '' ?>><?= htmlspecialchars($p) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                            <input name="title" id="issue_title" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                            <textarea name="description" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows="4" placeholder="Describe the issue found during cleaning/inspection"></textarea>
+                        </div>
+
+                        <div class="flex items-center gap-2">
+                            <input type="hidden" name="requires_downtime" value="0" />
+                            <input type="checkbox" name="requires_downtime" value="1" class="h-4 w-4" />
+                            <label class="text-sm text-gray-700">Requires downtime (set room Out of Order)</label>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 pt-2">
+                            <button type="button" class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition" onclick="closeIssueModal()">Cancel</button>
+                            <button class="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black transition">Create Ticket</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            function openIssueModal(roomId, title) {
+                const el = document.getElementById('issueModal');
+                if (!el) return;
+                const rid = document.getElementById('issue_room_id');
+                const t = document.getElementById('issue_title');
+                if (rid) rid.value = String(roomId || 0);
+                if (t) t.value = title || '';
+                el.classList.remove('hidden');
+                el.classList.add('flex');
+                el.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeIssueModal() {
+                const el = document.getElementById('issueModal');
+                if (!el) return;
+                el.classList.remove('flex');
+                el.classList.add('hidden');
+                el.setAttribute('aria-hidden', 'true');
+            }
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') {
+                    closeIssueModal();
+                }
+            });
+        </script>
         <?php else: ?>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-2">
@@ -318,14 +446,53 @@ include __DIR__ . '/../partials/sidebar.php';
                     <?php endif; ?>
 
                     <?php foreach ($tickets as $t): ?>
-                        <div class="rounded-lg border border-gray-100 p-4">
+                        <?php
+                            $tStatus = (string)($t['status'] ?? '');
+                            $tPriority = (string)($t['priority'] ?? '');
+                            $badge = 'border-gray-200 bg-gray-50 text-gray-700';
+                            if ($tStatus === 'Open' || $tStatus === 'Assigned') {
+                                $badge = 'border-blue-200 bg-blue-50 text-blue-700';
+                            } elseif ($tStatus === 'In Progress') {
+                                $badge = 'border-green-200 bg-green-50 text-green-700';
+                            } elseif ($tStatus === 'On Hold') {
+                                $badge = 'border-yellow-200 bg-yellow-50 text-yellow-800';
+                            } elseif ($tStatus === 'Resolved' || $tStatus === 'Closed') {
+                                $badge = 'border-gray-200 bg-white text-gray-900';
+                            } elseif ($tStatus === 'Cancelled') {
+                                $badge = 'border-red-200 bg-red-50 text-red-700';
+                            }
+
+                            $img = '';
+                            if (trim((string)($t['room_image_path'] ?? '')) !== '') {
+                                $img = (string)$t['room_image_path'];
+                            } elseif (trim((string)($t['room_type_image_path'] ?? '')) !== '') {
+                                $img = (string)$t['room_type_image_path'];
+                            }
+                        ?>
+                        <div class="rounded-xl border border-gray-100 overflow-hidden bg-white">
+                            <div class="flex items-stretch">
+                                <div class="w-28 bg-gray-50 flex items-center justify-center">
+                                    <?php if ($img !== ''): ?>
+                                        <img src="<?= htmlspecialchars($APP_BASE_URL . $img) ?>" alt="" style="height:100%;width:100%;object-fit:cover;" />
+                                    <?php else: ?>
+                                        <div class="text-xs text-gray-400">No image</div>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="flex-1 p-4">
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <div class="text-sm font-medium text-gray-900">
                                         <?= htmlspecialchars(($t['ticket_no'] ?? '') . ' • ' . ($t['title'] ?? '')) ?>
                                     </div>
-                                    <div class="text-xs text-gray-500 mt-1">
-                                        <?= htmlspecialchars(($t['status'] ?? '') . ' • ' . ($t['priority'] ?? '') . ' • ' . ($t['category_name'] ?? '')) ?>
+                                    <div class="flex items-center gap-2 mt-2 flex-wrap">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>"><?= htmlspecialchars($tStatus) ?></span>
+                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-200 bg-white text-gray-700"><?= htmlspecialchars($tPriority) ?></span>
+                                        <?php if (trim((string)($t['category_name'] ?? '')) !== ''): ?>
+                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-200 bg-gray-50 text-gray-700"><?= htmlspecialchars((string)$t['category_name']) ?></span>
+                                        <?php endif; ?>
+                                        <?php if ((int)($t['requires_downtime'] ?? 0) === 1): ?>
+                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-red-200 bg-red-50 text-red-700">Downtime</span>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="text-xs text-gray-600 mt-1">
                                         <?php if (trim((string)($t['room_no'] ?? '')) !== ''): ?>
@@ -333,9 +500,6 @@ include __DIR__ . '/../partials/sidebar.php';
                                         <?php endif; ?>
                                         <?php if (trim((string)($t['asset_code'] ?? '')) !== ''): ?>
                                             <?= htmlspecialchars(' • Asset ' . ($t['asset_code'] ?? '')) ?>
-                                        <?php endif; ?>
-                                        <?php if ((int)($t['requires_downtime'] ?? 0) === 1): ?>
-                                            <?= htmlspecialchars(' • Downtime') ?>
                                         <?php endif; ?>
                                     </div>
                                     <div class="text-xs text-gray-500 mt-1">
@@ -399,6 +563,9 @@ include __DIR__ . '/../partials/sidebar.php';
                                         <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Add Cost</button>
                                     </div>
                                 </form>
+                            </div>
+                        </div>
+                                </div>
                             </div>
                         </div>
                     <?php endforeach; ?>

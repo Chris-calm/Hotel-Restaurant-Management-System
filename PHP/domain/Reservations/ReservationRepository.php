@@ -6,10 +6,108 @@ final class ReservationRepository
 {
     private ?mysqli $conn;
     private ?bool $hasGuestIdentityColumns = null;
+    private ?bool $hasRoomTypeImageColumn = null;
+    private ?bool $hasRoomImageColumn = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    public function listReservationsByGuestId(int $guestId, int $limit = 50): array
+    {
+        if (!$this->conn) {
+            return [];
+        }
+
+        $guestId = max(1, $guestId);
+        $limit = max(1, min(200, $limit));
+
+        $sql =
+            "SELECT r.id, r.reference_no, r.status, r.checkin_date, r.checkout_date, r.created_at,
+                    rr.room_id, rooms.room_no,
+                    rt.name AS room_type_name
+             FROM reservations r
+             LEFT JOIN reservation_rooms rr ON rr.reservation_id = r.id
+             LEFT JOIN rooms ON rooms.id = rr.room_id
+             LEFT JOIN room_types rt ON rt.id = rr.room_type_id
+             WHERE r.guest_id = ?
+             ORDER BY r.id DESC
+             LIMIT {$limit}";
+
+        $stmt = $this->conn->prepare($sql);
+        if (!($stmt instanceof mysqli_stmt)) {
+            return [];
+        }
+        $stmt->bind_param('i', $guestId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $rows = [];
+        while ($row = $res->fetch_assoc()) {
+            $rows[] = $row;
+        }
+        $stmt->close();
+        return $rows;
+    }
+
+    private function hasRoomImageColumn(): bool
+    {
+        if ($this->hasRoomImageColumn !== null) {
+            return $this->hasRoomImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasRoomImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasRoomImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'rooms'
+               AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasRoomImageColumn = ($count === 1);
+        return $this->hasRoomImageColumn;
+    }
+
+    private function hasRoomTypeImageColumn(): bool
+    {
+        if ($this->hasRoomTypeImageColumn !== null) {
+            return $this->hasRoomTypeImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasRoomTypeImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasRoomTypeImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'room_types'
+               AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasRoomTypeImageColumn = ($count === 1);
+        return $this->hasRoomTypeImageColumn;
     }
 
     private function hasGuestIdentityColumns(): bool
@@ -109,10 +207,20 @@ final class ReservationRepository
 
         $statusSql = "('Pending','Confirmed','Upcoming','Checked In')";
 
+        $roomTypeImageSelect = $this->hasRoomTypeImageColumn()
+            ? 'room_types.image_path AS room_type_image_path'
+            : 'NULL AS room_type_image_path';
+
+        $roomImageSelect = $this->hasRoomImageColumn()
+            ? 'rooms.image_path AS room_image_path'
+            : 'NULL AS room_image_path';
+
         $sql =
             "SELECT rooms.id, rooms.room_no, rooms.floor, rooms.status AS room_status,
                     room_types.id AS room_type_id, room_types.code AS room_type_code, room_types.name AS room_type_name,
-                    room_types.base_rate
+                    room_types.base_rate,
+                    {$roomTypeImageSelect},
+                    {$roomImageSelect}
              FROM rooms
              INNER JOIN room_types ON room_types.id = rooms.room_type_id
              WHERE rooms.status <> 'Out of Order'
@@ -150,10 +258,20 @@ final class ReservationRepository
             return null;
         }
 
+        $roomTypeImageSelect = $this->hasRoomTypeImageColumn()
+            ? 'room_types.image_path AS room_type_image_path,'
+            : 'NULL AS room_type_image_path,';
+
+        $roomImageSelect = $this->hasRoomImageColumn()
+            ? 'rooms.image_path AS room_image_path,'
+            : 'NULL AS room_image_path,';
+
         $stmt = $this->conn->prepare(
             "SELECT rooms.id, rooms.room_no, rooms.floor, rooms.status AS room_status,
                     room_types.id AS room_type_id, room_types.code AS room_type_code, room_types.name AS room_type_name,
-                    room_types.base_rate
+                    room_types.base_rate,
+                    {$roomTypeImageSelect}
+                    {$roomImageSelect}
              FROM rooms
              INNER JOIN room_types ON room_types.id = rooms.room_type_id
              WHERE rooms.id = ?"

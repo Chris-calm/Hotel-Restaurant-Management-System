@@ -118,7 +118,6 @@ final class ReservationService
 
         if ($newStatus === 'Completed') {
             $this->autoCreateHousekeepingOnCheckout($reservationId);
-            $this->autoCreateMaintenanceOnCheckout($reservationId);
         }
 
         return true;

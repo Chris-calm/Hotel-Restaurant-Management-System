@@ -17,6 +17,11 @@ final class GuestService
         return ['Lead', 'Booked', 'Checked In', 'Checked Out', 'Blacklisted'];
     }
 
+    public static function allowedLoyaltyTiers(): array
+    {
+        return ['None', 'Silver', 'Gold', 'Platinum'];
+    }
+
     public function validate(array $data): array
     {
         $errors = [];
@@ -41,6 +46,17 @@ final class GuestService
         }
         if (!Validator::inArray($data['status'] ?? 'Lead', self::allowedStatuses())) {
             $errors['status'] = 'Status is invalid.';
+        }
+
+        $tier = trim((string)($data['loyalty_tier'] ?? ''));
+        if ($tier !== '' && $tier !== 'None' && !Validator::inArray($tier, self::allowedLoyaltyTiers())) {
+            $errors['loyalty_tier'] = 'Loyalty tier is invalid.';
+        }
+
+        if (isset($data['loyalty_points']) && $data['loyalty_points'] !== '') {
+            if (!is_numeric($data['loyalty_points']) || (int)$data['loyalty_points'] < 0) {
+                $errors['loyalty_points'] = 'Loyalty points must be 0 or more.';
+            }
         }
 
         return $errors;

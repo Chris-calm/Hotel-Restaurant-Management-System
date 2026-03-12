@@ -49,46 +49,49 @@ include __DIR__ . '/../../partials/sidebar.php';
             </form>
         </div>
 
-        <div class="bg-white rounded-lg border border-gray-100 overflow-hidden">
-            <div class="overflow-x-auto">
-                <table class="w-full">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        <?php if (empty($guests)): ?>
-                            <tr>
-                                <td colspan="5" class="px-6 py-10 text-center text-gray-500">No guests found.</td>
-                            </tr>
-                        <?php else: ?>
-                            <?php foreach ($guests as $g): ?>
-                                <tr class="hover:bg-gray-50">
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                        <?= htmlspecialchars(($g['first_name'] ?? '') . ' ' . ($g['last_name'] ?? '')) ?>
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($g['email'] ?? '') ?></td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($g['phone'] ?? '') ?></td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700"><?= htmlspecialchars($g['status'] ?? '') ?></td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
-                                        <a class="text-blue-600 hover:underline" href="view.php?id=<?= (int)$g['id'] ?>">View</a>
-                                        <span class="text-gray-300 mx-2">|</span>
-                                        <a class="text-gray-900 hover:underline" href="edit.php?id=<?= (int)$g['id'] ?>">Edit</a>
-                                        <span class="text-gray-300 mx-2">|</span>
-                                        <a class="text-red-600 hover:underline" href="delete.php?id=<?= (int)$g['id'] ?>">Delete</a>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+        <?php if (empty($guests)): ?>
+            <div class="bg-white rounded-lg border border-gray-100 p-10 text-center text-gray-500">No guests found.</div>
+        <?php else: ?>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <?php foreach ($guests as $g): ?>
+                    <?php
+                        $status = (string)($g['status'] ?? '');
+                        $badge = 'border-gray-200 bg-gray-50 text-gray-700';
+                        if ($status === 'Active') {
+                            $badge = 'border-green-200 bg-green-50 text-green-700';
+                        } elseif ($status === 'VIP') {
+                            $badge = 'border-yellow-200 bg-yellow-50 text-yellow-800';
+                        } elseif ($status === 'Blacklisted') {
+                            $badge = 'border-red-200 bg-red-50 text-red-700';
+                        }
+                        $name = trim((string)($g['first_name'] ?? '') . ' ' . (string)($g['last_name'] ?? ''));
+                    ?>
+                    <div class="rounded-xl border border-gray-100 bg-white p-4">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="text-sm font-semibold text-gray-900"><?= htmlspecialchars($name) ?></div>
+                                <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($g['email'] ?? '')) ?></div>
+                                <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($g['phone'] ?? '')) ?></div>
+                                <?php if (trim((string)($g['loyalty_tier'] ?? '')) !== '' || (int)($g['loyalty_points'] ?? 0) > 0): ?>
+                                    <div class="text-xs text-gray-500 mt-2">
+                                        <?= htmlspecialchars((string)($g['loyalty_tier'] ?? '')) ?><?= trim((string)($g['loyalty_tier'] ?? '')) !== '' ? ' • ' : '' ?><?= htmlspecialchars((string)((int)($g['loyalty_points'] ?? 0))) ?> pts
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>">
+                                <?= htmlspecialchars($status) ?>
+                            </span>
+                        </div>
+
+                        <div class="mt-4 flex items-center gap-2">
+                            <a href="view.php?id=<?= (int)$g['id'] ?>" class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">View</a>
+                            <a href="edit.php?id=<?= (int)$g['id'] ?>" class="px-3 py-2 rounded-lg bg-gray-900 text-white text-xs hover:bg-black transition">Edit</a>
+                            <a href="delete.php?id=<?= (int)$g['id'] ?>" class="ml-auto px-3 py-2 rounded-lg border border-red-200 text-red-700 text-xs hover:bg-red-50 transition">Delete</a>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
             </div>
-        </div>
+        <?php endif; ?>
     </main>
 </section>
 <?php include __DIR__ . '/../../partials/page_end.php';

@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS guests (
   id_type VARCHAR(40) NULL,
   id_number VARCHAR(60) NULL,
   id_photo_path VARCHAR(255) NULL,
+  preferences TEXT NULL,
+  notes TEXT NULL,
+  loyalty_tier VARCHAR(20) NULL,
+  loyalty_points INT UNSIGNED NOT NULL DEFAULT 0,
   status ENUM('Lead','Booked','Checked In','Checked Out','Blacklisted') NOT NULL DEFAULT 'Lead',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
@@ -48,6 +52,7 @@ CREATE TABLE IF NOT EXISTS room_types (
   base_rate DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   max_adults TINYINT UNSIGNED NOT NULL DEFAULT 2,
   max_children TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  image_path VARCHAR(255) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
@@ -56,11 +61,29 @@ CREATE TABLE IF NOT EXISTS rooms (
   room_no VARCHAR(20) NOT NULL UNIQUE,
   room_type_id INT UNSIGNED NOT NULL,
   floor VARCHAR(10) NULL,
+  image_path VARCHAR(255) NULL,
+  lock_provider VARCHAR(40) NULL,
+  lock_device_id VARCHAR(80) NULL,
+  lock_status ENUM('Locked','Unlocked','Offline') NOT NULL DEFAULT 'Locked',
+  lock_battery TINYINT UNSIGNED NULL,
+  lock_last_sync_at DATETIME NULL,
   status ENUM('Vacant','Occupied','Cleaning','Out of Order') NOT NULL DEFAULT 'Vacant',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_rooms_room_type
     FOREIGN KEY (room_type_id) REFERENCES room_types(id)
     ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS room_lock_logs (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  room_id INT UNSIGNED NOT NULL,
+  action VARCHAR(30) NOT NULL,
+  actor_user_id INT UNSIGNED NULL,
+  notes VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_room_lock_logs_room
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
+    ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS reservations (

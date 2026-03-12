@@ -102,20 +102,35 @@ include __DIR__ . '/../partials/sidebar.php';
             </div>
         <?php endif; ?>
 
-        <div class="bg-white rounded-lg border border-gray-100 p-6">
-            <div class="flex items-center justify-between gap-4 mb-4">
+        <?php
+            $status = (string)($reservation['status'] ?? '');
+            $badge = 'border-gray-200 bg-gray-50 text-gray-700';
+            if ($status === 'Confirmed' || $status === 'Upcoming') {
+                $badge = 'border-blue-200 bg-blue-50 text-blue-700';
+            } elseif ($status === 'Checked In') {
+                $badge = 'border-green-200 bg-green-50 text-green-700';
+            } elseif ($status === 'Cancelled' || $status === 'No Show') {
+                $badge = 'border-red-200 bg-red-50 text-red-700';
+            }
+        ?>
+
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <div class="flex items-start justify-between gap-4 mb-5">
                 <div>
                     <div class="text-xs text-gray-500">Reference No</div>
-                    <div class="text-lg font-semibold text-gray-900"><?= htmlspecialchars($reservation['reference_no'] ?? '') ?></div>
+                    <div class="text-lg font-semibold text-gray-900 mt-1"><?= htmlspecialchars($reservation['reference_no'] ?? '') ?></div>
+                    <div class="text-xs text-gray-500 mt-1">Created: <?= htmlspecialchars((string)($reservation['created_at'] ?? '')) ?></div>
                 </div>
                 <div class="text-right">
                     <div class="text-xs text-gray-500">Status</div>
-                    <div class="text-sm font-medium text-gray-900"><?= htmlspecialchars($reservation['status'] ?? '') ?></div>
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs border mt-1 <?= htmlspecialchars($badge) ?>">
+                        <?= htmlspecialchars($status) ?>
+                    </span>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="rounded-lg border border-gray-100 p-4">
+                <div class="rounded-xl border border-gray-100 p-4">
                     <div class="text-xs text-gray-500 mb-2">Guest</div>
                     <div class="text-sm font-medium text-gray-900"><?= htmlspecialchars(trim(($reservation['first_name'] ?? '') . ' ' . ($reservation['last_name'] ?? ''))) ?></div>
                     <div class="text-sm text-gray-600 mt-1"><?= htmlspecialchars($reservation['phone'] ?? '') ?></div>
@@ -130,32 +145,46 @@ include __DIR__ . '/../partials/sidebar.php';
                     <?php endif; ?>
                 </div>
 
-                <div class="rounded-lg border border-gray-100 p-4">
+                <div class="rounded-xl border border-gray-100 p-4">
                     <div class="text-xs text-gray-500 mb-2">Room</div>
                     <div class="text-sm font-medium text-gray-900"><?= htmlspecialchars('Room ' . ($reservation['room_no'] ?? '-')) ?></div>
                     <div class="text-sm text-gray-600 mt-1"><?= htmlspecialchars(($reservation['room_type_name'] ?? '') . ' (' . ($reservation['room_type_code'] ?? '') . ')') ?></div>
                 </div>
 
-                <div class="rounded-lg border border-gray-100 p-4">
+                <div class="rounded-xl border border-gray-100 p-4">
                     <div class="text-xs text-gray-500 mb-2">Stay</div>
                     <div class="text-sm text-gray-700">Check-in: <span class="font-medium text-gray-900"><?= htmlspecialchars($checkin) ?></span></div>
                     <div class="text-sm text-gray-700 mt-1">Check-out: <span class="font-medium text-gray-900"><?= htmlspecialchars($checkout) ?></span></div>
                     <div class="text-sm text-gray-700 mt-1">Nights: <span class="font-medium text-gray-900"><?= (int)$nights ?></span></div>
                 </div>
 
-                <div class="rounded-lg border border-gray-100 p-4">
-                    <div class="text-xs text-gray-500 mb-2">Charges</div>
-                    <div class="text-sm text-gray-700">Rate/Night: <span class="font-medium text-gray-900">₱<?= number_format($rate, 2) ?></span></div>
-                    <div class="text-sm text-gray-700 mt-1">Subtotal: <span class="font-medium text-gray-900">₱<?= number_format($subtotal, 2) ?></span></div>
-                    <div class="text-sm text-gray-700 mt-1">Deposit: <span class="font-medium text-gray-900">₱<?= number_format($deposit, 2) ?></span></div>
-                    <div class="text-sm text-gray-700 mt-1">Balance: <span class="font-medium text-gray-900">₱<?= number_format($balance, 2) ?></span></div>
+                <div class="rounded-xl border border-gray-100 p-4 bg-gray-50">
+                    <div class="text-xs text-gray-500 mb-3">Charges</div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="rounded-lg border border-gray-100 bg-white p-3">
+                            <div class="text-xs text-gray-500">Rate/Night</div>
+                            <div class="text-sm font-medium text-gray-900 mt-1">₱<?= number_format($rate, 2) ?></div>
+                        </div>
+                        <div class="rounded-lg border border-gray-100 bg-white p-3">
+                            <div class="text-xs text-gray-500">Subtotal</div>
+                            <div class="text-sm font-medium text-gray-900 mt-1">₱<?= number_format($subtotal, 2) ?></div>
+                        </div>
+                        <div class="rounded-lg border border-gray-100 bg-white p-3">
+                            <div class="text-xs text-gray-500">Deposit</div>
+                            <div class="text-sm font-medium text-gray-900 mt-1">₱<?= number_format($deposit, 2) ?></div>
+                        </div>
+                        <div class="rounded-lg border border-gray-100 bg-white p-3">
+                            <div class="text-xs text-gray-500">Balance</div>
+                            <div class="text-sm font-medium text-gray-900 mt-1">₱<?= number_format($balance, 2) ?></div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div class="mt-6">
                 <h3 class="text-sm font-medium text-gray-900 mb-3">Actions</h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="rounded-lg border border-gray-100 p-4">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div class="rounded-xl border border-gray-100 p-4 lg:col-span-2">
                         <div class="text-xs text-gray-500 mb-2">Confirm (requires deposit)</div>
                         <form method="post" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <input type="hidden" name="action" value="Confirmed" />
@@ -178,7 +207,7 @@ include __DIR__ . '/../partials/sidebar.php';
                         </form>
                     </div>
 
-                    <div class="rounded-lg border border-gray-100 p-4">
+                    <div class="rounded-xl border border-gray-100 p-4">
                         <div class="text-xs text-gray-500 mb-2">Status Updates</div>
                         <div class="grid grid-cols-1 gap-2">
                             <form method="post">

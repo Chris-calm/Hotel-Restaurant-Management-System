@@ -5,10 +5,72 @@ require_once __DIR__ . '/../../core/Database.php';
 final class MaintenanceRepository
 {
     private ?mysqli $conn;
+    private ?bool $hasRoomImageColumn = null;
+    private ?bool $hasRoomTypeImageColumn = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasRoomImageColumn(): bool
+    {
+        if ($this->hasRoomImageColumn !== null) {
+            return $this->hasRoomImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasRoomImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasRoomImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'rooms'
+               AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasRoomImageColumn = ($count === 1);
+        return $this->hasRoomImageColumn;
+    }
+
+    private function hasRoomTypeImageColumn(): bool
+    {
+        if ($this->hasRoomTypeImageColumn !== null) {
+            return $this->hasRoomTypeImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasRoomTypeImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasRoomTypeImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'room_types'
+               AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasRoomTypeImageColumn = ($count === 1);
+        return $this->hasRoomTypeImageColumn;
     }
 
     public function listRooms(string $q = ''): array
@@ -165,8 +227,13 @@ final class MaintenanceRepository
         $priority = trim((string)($filters['priority'] ?? ''));
         $q = trim((string)($filters['q'] ?? ''));
 
+        $imgSelect = $this->hasRoomImageColumn() ? 'r.image_path AS room_image_path,' : 'NULL AS room_image_path,';
+        $rtImgSelect = $this->hasRoomTypeImageColumn() ? 'rt.image_path AS room_type_image_path,' : 'NULL AS room_type_image_path,';
+
         $sql = "SELECT t.id, t.ticket_no, t.status, t.priority, t.title, t.requires_downtime,
                        t.room_id, r.room_no,
+                       {$imgSelect}
+                       {$rtImgSelect}
                        t.asset_id, a.asset_code,
                        c.name AS category_name,
                        t.assigned_to, u.username AS assigned_username,
@@ -174,6 +241,7 @@ final class MaintenanceRepository
                        t.opened_at, t.updated_at
                 FROM maintenance_tickets t
                 LEFT JOIN rooms r ON r.id = t.room_id
+                LEFT JOIN room_types rt ON rt.id = r.room_type_id
                 LEFT JOIN assets a ON a.id = t.asset_id
                 LEFT JOIN maintenance_categories c ON c.id = t.category_id
                 LEFT JOIN users u ON u.id = t.assigned_to

@@ -29,20 +29,58 @@ $filters = [
     'guest_q' => (string)Request::get('guest_q', ''),
 ];
 
+$sanitizeDate = static function (string $v): string {
+    $v = trim($v);
+    if ($v === '') {
+        return '';
+    }
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) {
+        return '';
+    }
+    $y = (int)substr($v, 0, 4);
+    if ($y < 2000) {
+        return '';
+    }
+    return $v;
+};
+
+$filters['checkin_date'] = $sanitizeDate((string)$filters['checkin_date']);
+$filters['checkout_date'] = $sanitizeDate((string)$filters['checkout_date']);
+
 $guests = $reservationService->listGuests($filters['guest_q']);
 $roomTypes = $roomTypeService->list();
 
 $availableRooms = [];
-if ($filters['checkin_date'] !== '' && $filters['checkout_date'] !== '') {
+$checkinValid = ($filters['checkin_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['checkin_date']) === 1);
+$checkoutValid = ($filters['checkout_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['checkout_date']) === 1);
+$dateRangeValid = false;
+if ($checkinValid && $checkoutValid) {
+    $t1 = strtotime($filters['checkin_date']);
+    $t2 = strtotime($filters['checkout_date']);
+    $dateRangeValid = ($t1 !== false && $t2 !== false && $t2 > $t1);
+}
+
+if ($dateRangeValid) {
     $availableRooms = $reservationService->findAvailableRooms(
         $filters['checkin_date'],
         $filters['checkout_date'],
         $filters['room_type_id']
     );
+} else {
+    $rooms = $roomRepo->search('');
+    foreach ($rooms as $r) {
+        if ((string)($r['status'] ?? '') !== 'Vacant') {
+            continue;
+        }
+        if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
+            continue;
+        }
+        $availableRooms[] = $r;
+    }
 }
 
 $nights = 0;
-if ($filters['checkin_date'] !== '' && $filters['checkout_date'] !== '') {
+if ($dateRangeValid) {
     $n1 = strtotime($filters['checkin_date']);
     $n2 = strtotime($filters['checkout_date']);
     if ($n1 !== false && $n2 !== false && $n2 > $n1) {
@@ -68,8 +106,8 @@ $data = [
 if (Request::isPost()) {
     $data['guest_id'] = Request::int('post', 'guest_id', 0);
     $data['source'] = (string)Request::post('source', 'Walk-in');
-    $data['checkin_date'] = (string)Request::post('checkin_date', '');
-    $data['checkout_date'] = (string)Request::post('checkout_date', '');
+    $data['checkin_date'] = $sanitizeDate((string)Request::post('checkin_date', ''));
+    $data['checkout_date'] = $sanitizeDate((string)Request::post('checkout_date', ''));
     $data['room_id'] = Request::int('post', 'room_id', 0);
     $data['rate'] = (string)Request::post('rate', '');
     $data['adults'] = (int)Request::post('adults', 1);
@@ -115,6 +153,17 @@ if (Request::isPost()) {
             $filters['checkout_date'],
             $filters['room_type_id']
         );
+    } else {
+        $rooms = $roomRepo->search('');
+        foreach ($rooms as $r) {
+            if ((string)($r['status'] ?? '') !== 'Vacant') {
+                continue;
+            }
+            if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
+                continue;
+            }
+            $availableRooms[] = $r;
+        }
     }
 }
 
@@ -137,6 +186,8 @@ if (isset($data['rate']) && is_numeric($data['rate'])) {
 $staySubtotal = $nights * $ratePerNight;
 $depositPreview = is_numeric((string)($data['deposit_amount'] ?? '')) ? (float)$data['deposit_amount'] : 0.0;
 $balancePreview = max(0, $staySubtotal - $depositPreview);
+
+$APP_BASE_URL = App::baseUrl();
 
 $pageTitle = 'Front Desk - Hotel Management System';
 
@@ -171,11 +222,11 @@ include __DIR__ . '/../partials/sidebar.php';
                 <form method="get" class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Check-in</label>
-                        <input type="date" name="checkin_date" value="<?= htmlspecialchars($filters['checkin_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input type="date" name="checkin_date" min="2000-01-01" max="2100-12-31" value="<?= htmlspecialchars($filters['checkin_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Check-out</label>
-                        <input type="date" name="checkout_date" value="<?= htmlspecialchars($filters['checkout_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input type="date" name="checkout_date" min="2000-01-01" max="2100-12-31" value="<?= htmlspecialchars($filters['checkout_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Room Type (optional)</label>
@@ -247,14 +298,14 @@ include __DIR__ . '/../partials/sidebar.php';
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Check-in</label>
-                        <input type="date" name="checkin_date" value="<?= htmlspecialchars($data['checkin_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input id="res_checkin" type="date" name="checkin_date" min="2000-01-01" max="2100-12-31" value="<?= htmlspecialchars($data['checkin_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                         <?php if (isset($errors['checkin_date'])): ?>
                             <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['checkin_date']) ?></div>
                         <?php endif; ?>
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Check-out</label>
-                        <input type="date" name="checkout_date" value="<?= htmlspecialchars($data['checkout_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input id="res_checkout" type="date" name="checkout_date" min="2000-01-01" max="2100-12-31" value="<?= htmlspecialchars($data['checkout_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                         <?php if (isset($errors['checkout_date'])): ?>
                             <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['checkout_date']) ?></div>
                         <?php endif; ?>
@@ -262,53 +313,107 @@ include __DIR__ . '/../partials/sidebar.php';
 
                     <div class="md:col-span-2">
                         <label class="block text-sm font-medium text-gray-700 mb-1">Available Room</label>
-                        <select name="room_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                        <select id="room_id" name="room_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
                             <option value="0">Select Available Room</option>
                             <?php foreach ($availableRooms as $r): ?>
-                                <option value="<?= (int)$r['id'] ?>" <?= (int)$data['room_id'] === (int)$r['id'] ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars('Room ' . $r['room_no'] . ' • ' . $r['room_type_name'] . ' • ₱' . number_format((float)$r['base_rate'], 2)) ?>
+                                <option value="<?= (int)$r['id'] ?>" data-rate="<?= htmlspecialchars((string)($r['base_rate'] ?? 0)) ?>" <?= (int)$data['room_id'] === (int)$r['id'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars('Room ' . $r['room_no'] . ' — ' . $r['room_type_name'] . ' (₱' . number_format((float)$r['base_rate'], 2) . ')') ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if (empty($availableRooms)): ?>
+                            <div class="text-xs text-gray-500 mt-2">
+                                No rooms to show. Select a date range to check availability, or ensure you have rooms in <span class="font-medium">Vacant</span> status.
+                            </div>
+                        <?php elseif ($filters['checkin_date'] === '' || $filters['checkout_date'] === ''): ?>
+                            <div class="text-xs text-gray-500 mt-2">
+                                Showing <span class="font-medium">Vacant</span> rooms for walk-ins. Select a date range to check availability for future stays.
+                            </div>
+                        <?php endif; ?>
                         <?php if (isset($errors['room_id'])): ?>
                             <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['room_id']) ?></div>
                         <?php endif; ?>
-                        <?php if ($filters['checkin_date'] === '' || $filters['checkout_date'] === ''): ?>
-                            <div class="text-xs text-gray-500 mt-1">Use “Search Availability” to load available rooms for a date range.</div>
+
+                        <?php if (!empty($availableRooms)): ?>
+                            <div class="mt-3">
+                                <div class="text-xs text-gray-500 mb-2">Quick select</div>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    <?php foreach ($availableRooms as $r): ?>
+                                        <?php
+                                            $img = '';
+                                            if (trim((string)($r['room_image_path'] ?? '')) !== '') {
+                                                $img = (string)$r['room_image_path'];
+                                            } elseif (trim((string)($r['room_type_image_path'] ?? '')) !== '') {
+                                                $img = (string)$r['room_type_image_path'];
+                                            }
+                                            $isSel = (int)$data['room_id'] === (int)$r['id'];
+                                        ?>
+                                        <button
+                                            type="button"
+                                            class="text-left rounded-xl border <?= $isSel ? 'border-gray-900' : 'border-gray-200' ?> overflow-hidden hover:border-gray-900 transition"
+                                            onclick="selectRoomCard(<?= (int)$r['id'] ?>)"
+                                        >
+                                            <div class="h-24 bg-gray-50 flex items-center justify-center">
+                                                <?php if ($img !== ''): ?>
+                                                    <img src="<?= htmlspecialchars($APP_BASE_URL . $img) ?>" alt="" style="height:100%;width:100%;object-fit:cover;" />
+                                                <?php else: ?>
+                                                    <div class="text-xs text-gray-400">No image</div>
+                                                <?php endif; ?>
+                                            </div>
+                                            <div class="p-3">
+                                                <div class="text-sm font-medium text-gray-900">Room <?= htmlspecialchars($r['room_no'] ?? '') ?></div>
+                                                <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars($r['room_type_name'] ?? '') ?></div>
+                                                <div class="text-xs text-gray-700 mt-2">₱<?= number_format((float)($r['base_rate'] ?? 0), 2) ?>/night</div>
+                                            </div>
+                                        </button>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
                         <?php endif; ?>
                     </div>
 
-                    <div class="md:col-span-2 rounded-lg border border-gray-100 p-4 bg-gray-50">
-                        <div class="text-xs text-gray-500 mb-2">Payment Preview</div>
-                        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div class="md:col-span-2 rounded-xl border border-gray-100 p-4 bg-gray-50">
+                        <div class="flex items-start justify-between gap-4">
                             <div>
+                                <div class="text-xs text-gray-500">Payment Preview</div>
+                                <div class="text-sm font-medium text-gray-900 mt-1">Stay total: ₱<span id="pv_stay_total"><?= number_format((float)$staySubtotal, 2) ?></span></div>
+                                <div class="text-xs text-gray-500 mt-1">Deposit: ₱<span id="pv_deposit"><?= number_format((float)$depositPreview, 2) ?></span> • Balance: ₱<span id="pv_balance"><?= number_format((float)$balancePreview, 2) ?></span></div>
+                            </div>
+                            <div class="text-right">
                                 <div class="text-xs text-gray-500">Nights</div>
-                                <div class="text-sm font-medium text-gray-900"><?= (int)$nights ?></div>
-                            </div>
-                            <div>
-                                <div class="text-xs text-gray-500">Rate / Night</div>
-                                <div class="text-sm font-medium text-gray-900">₱<?= number_format((float)$ratePerNight, 2) ?></div>
-                            </div>
-                            <div>
-                                <div class="text-xs text-gray-500">Stay Total</div>
-                                <div class="text-sm font-medium text-gray-900">₱<?= number_format((float)$staySubtotal, 2) ?></div>
-                            </div>
-                            <div>
-                                <div class="text-xs text-gray-500">Balance</div>
-                                <div class="text-sm font-medium text-gray-900">₱<?= number_format((float)$balancePreview, 2) ?></div>
+                                <div class="text-sm font-medium text-gray-900"><span id="pv_nights"><?= (int)$nights ?></span></div>
                             </div>
                         </div>
-                        <div class="text-xs text-gray-500 mt-2">Deposit entered: ₱<?= number_format((float)$depositPreview, 2) ?></div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+                            <div class="rounded-lg border border-gray-100 bg-white p-3">
+                                <div class="text-xs text-gray-500">Rate / Night</div>
+                                <div class="text-sm font-medium text-gray-900 mt-1">₱<span id="pv_rate"><?= number_format((float)$ratePerNight, 2) ?></span></div>
+                            </div>
+                            <div class="rounded-lg border border-gray-100 bg-white p-3">
+                                <div class="text-xs text-gray-500">Stay Total</div>
+                                <div class="text-sm font-medium text-gray-900 mt-1">₱<span id="pv_stay_total_card"><?= number_format((float)$staySubtotal, 2) ?></span></div>
+                            </div>
+                            <div class="rounded-lg border border-gray-100 bg-white p-3">
+                                <div class="text-xs text-gray-500">Balance</div>
+                                <div class="text-sm font-medium text-gray-900 mt-1">₱<span id="pv_balance_card"><?= number_format((float)$balancePreview, 2) ?></span></div>
+                            </div>
+                        </div>
+                        <?php if ($selectedRoom && (trim((string)($selectedRoom['room_image_path'] ?? '')) !== '' || trim((string)($selectedRoom['room_type_image_path'] ?? '')) !== '')): ?>
+                            <div class="mt-4">
+                                <?php $img = trim((string)($selectedRoom['room_image_path'] ?? '')) !== '' ? (string)$selectedRoom['room_image_path'] : (string)($selectedRoom['room_type_image_path'] ?? ''); ?>
+                                <img src="<?= htmlspecialchars($APP_BASE_URL . $img) ?>" alt="Room" style="max-height:220px;border-radius:14px;" />
+                            </div>
+                        <?php endif; ?>
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Rate (optional override)</label>
-                        <input name="rate" value="<?= htmlspecialchars($data['rate']) ?>" placeholder="Leave blank to use base rate" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input id="rate_override" name="rate" value="<?= htmlspecialchars($data['rate']) ?>" placeholder="Leave blank to use base rate" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Deposit Amount</label>
-                        <input name="deposit_amount" value="<?= htmlspecialchars($data['deposit_amount']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input id="deposit_amount" name="deposit_amount" value="<?= htmlspecialchars($data['deposit_amount']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                         <?php if (isset($errors['deposit_amount'])): ?>
                             <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['deposit_amount']) ?></div>
                         <?php endif; ?>
@@ -333,6 +438,118 @@ include __DIR__ . '/../partials/sidebar.php';
                         <a href="front_desk.php" class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Reset</a>
                     </div>
                 </form>
+
+                <script>
+                    function selectRoomCard(roomId) {
+                        const sel = document.getElementById('room_id');
+                        if (!sel) return;
+                        sel.value = String(roomId);
+                        sel.dispatchEvent(new Event('change'));
+                    }
+
+                    (function () {
+                        const checkin = document.getElementById('res_checkin');
+                        const checkout = document.getElementById('res_checkout');
+                        const roomSel = document.getElementById('room_id');
+                        const rateOverride = document.getElementById('rate_override');
+                        const depositInput = document.getElementById('deposit_amount');
+
+                        const pv = {
+                            nights: document.getElementById('pv_nights'),
+                            rate: document.getElementById('pv_rate'),
+                            stayTotal: document.getElementById('pv_stay_total'),
+                            stayTotalCard: document.getElementById('pv_stay_total_card'),
+                            deposit: document.getElementById('pv_deposit'),
+                            balance: document.getElementById('pv_balance'),
+                            balanceCard: document.getElementById('pv_balance_card'),
+                        };
+
+                        function fmtMoney(n) {
+                            const v = isFinite(n) ? n : 0;
+                            return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        }
+
+                        function parseNum(val) {
+                            const s = String(val ?? '').replace(/,/g, '').trim();
+                            const n = parseFloat(s);
+                            return isFinite(n) ? n : 0;
+                        }
+
+                        function normalizeDateValue(raw) {
+                            const v = (raw || '').trim();
+                            if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return '';
+                            const y = parseInt(v.slice(0, 4), 10);
+                            if (!isFinite(y) || y < 2000) return '';
+                            return v;
+                        }
+
+                        function calcNights(ci, co) {
+                            if (!ci || !co) return 0;
+                            const d1 = new Date(ci + 'T00:00:00');
+                            const d2 = new Date(co + 'T00:00:00');
+                            if (!(d1 instanceof Date) || !(d2 instanceof Date)) return 0;
+                            const ms = d2.getTime() - d1.getTime();
+                            if (!isFinite(ms) || ms <= 0) return 0;
+                            return Math.round(ms / 86400000);
+                        }
+
+                        function getBaseRate() {
+                            if (!roomSel) return 0;
+                            const opt = roomSel.options[roomSel.selectedIndex];
+                            if (!opt) return 0;
+                            return parseNum(opt.getAttribute('data-rate') || '0');
+                        }
+
+                        function updatePaymentPreviewOnly() {
+                            const ci = normalizeDateValue(checkin?.value || '');
+                            const co = normalizeDateValue(checkout?.value || '');
+                            const nights = calcNights(ci, co);
+                            const baseRate = getBaseRate();
+                            const override = parseNum(rateOverride?.value || '');
+                            const rate = override > 0 ? override : baseRate;
+                            const stayTotal = nights * rate;
+                            const deposit = parseNum(depositInput?.value || '');
+                            const balance = Math.max(0, stayTotal - deposit);
+
+                            if (pv.nights) pv.nights.textContent = String(nights);
+                            if (pv.rate) pv.rate.textContent = fmtMoney(rate);
+                            if (pv.stayTotal) pv.stayTotal.textContent = fmtMoney(stayTotal);
+                            if (pv.stayTotalCard) pv.stayTotalCard.textContent = fmtMoney(stayTotal);
+                            if (pv.deposit) pv.deposit.textContent = fmtMoney(deposit);
+                            if (pv.balance) pv.balance.textContent = fmtMoney(balance);
+                            if (pv.balanceCard) pv.balanceCard.textContent = fmtMoney(balance);
+                        }
+
+                        function updateAvailabilityUrl() {
+                            if (!checkin || !checkout) return;
+                            const ci = normalizeDateValue(checkin.value || '');
+                            const co = normalizeDateValue(checkout.value || '');
+                            if (ci === '' || co === '') return;
+
+                            const params = new URLSearchParams(window.location.search);
+                            params.set('checkin_date', ci);
+                            params.set('checkout_date', co);
+
+                            const currentRoomType = params.get('room_type_id');
+                            if (!currentRoomType) {
+                                params.set('room_type_id', '0');
+                            }
+
+                            window.location.href = window.location.pathname + '?' + params.toString();
+                        }
+
+                        checkin && checkin.addEventListener('change', updateAvailabilityUrl);
+                        checkout && checkout.addEventListener('change', updateAvailabilityUrl);
+
+                        checkin && checkin.addEventListener('input', updatePaymentPreviewOnly);
+                        checkout && checkout.addEventListener('input', updatePaymentPreviewOnly);
+                        roomSel && roomSel.addEventListener('change', updatePaymentPreviewOnly);
+                        rateOverride && rateOverride.addEventListener('input', updatePaymentPreviewOnly);
+                        depositInput && depositInput.addEventListener('input', updatePaymentPreviewOnly);
+
+                        updatePaymentPreviewOnly();
+                    })();
+                </script>
             </div>
         </div>
     </main>

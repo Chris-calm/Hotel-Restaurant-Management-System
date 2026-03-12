@@ -5,10 +5,72 @@ require_once __DIR__ . '/../../core/Database.php';
 final class RoomRepository
 {
     private ?mysqli $conn;
+    private ?bool $hasImageColumn = null;
+    private ?bool $hasLockColumns = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasLockColumns(): bool
+    {
+        if ($this->hasLockColumns !== null) {
+            return $this->hasLockColumns;
+        }
+        if (!$this->conn) {
+            $this->hasLockColumns = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasLockColumns = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'rooms'
+               AND COLUMN_NAME IN ('lock_provider','lock_device_id','lock_status','lock_battery','lock_last_sync_at')"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasLockColumns = ($count === 5);
+        return $this->hasLockColumns;
+    }
+
+    private function hasImageColumn(): bool
+    {
+        if ($this->hasImageColumn !== null) {
+            return $this->hasImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'rooms'
+               AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasImageColumn = ($count === 1);
+        return $this->hasImageColumn;
     }
 
     public function search(string $q = ''): array
@@ -19,7 +81,13 @@ final class RoomRepository
 
         $q = trim($q);
         if ($q === '') {
-            $sql = "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id,
+            $imgSelect = $this->hasImageColumn() ? 'r.image_path' : 'NULL AS image_path';
+            $lockSelect = $this->hasLockColumns()
+                ? "r.lock_provider, r.lock_device_id, r.lock_status, r.lock_battery, r.lock_last_sync_at"
+                : "NULL AS lock_provider, NULL AS lock_device_id, NULL AS lock_status, NULL AS lock_battery, NULL AS lock_last_sync_at";
+
+            $sql = "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                           {$lockSelect},
                            rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
                     FROM rooms r
                     JOIN room_types rt ON rt.id = r.room_type_id
@@ -36,8 +104,14 @@ final class RoomRepository
         }
 
         $like = '%' . $q . '%';
+        $imgSelect = $this->hasImageColumn() ? 'r.image_path' : 'NULL AS image_path';
+        $lockSelect = $this->hasLockColumns()
+            ? "r.lock_provider, r.lock_device_id, r.lock_status, r.lock_battery, r.lock_last_sync_at"
+            : "NULL AS lock_provider, NULL AS lock_device_id, NULL AS lock_status, NULL AS lock_battery, NULL AS lock_last_sync_at";
+
         $stmt = $this->conn->prepare(
-            "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id,
+            "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                    {$lockSelect},
                     rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
              FROM rooms r
              JOIN room_types rt ON rt.id = r.room_type_id
@@ -63,8 +137,14 @@ final class RoomRepository
         if (!$this->conn) {
             return null;
         }
+        $imgSelect = $this->hasImageColumn() ? 'r.image_path' : 'NULL AS image_path';
+        $lockSelect = $this->hasLockColumns()
+            ? "r.lock_provider, r.lock_device_id, r.lock_status, r.lock_battery, r.lock_last_sync_at"
+            : "NULL AS lock_provider, NULL AS lock_device_id, NULL AS lock_status, NULL AS lock_battery, NULL AS lock_last_sync_at";
+
         $stmt = $this->conn->prepare(
-            "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id,
+            "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                    {$lockSelect},
                     rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
              FROM rooms r
              JOIN room_types rt ON rt.id = r.room_type_id
@@ -87,9 +167,30 @@ final class RoomRepository
             return 0;
         }
 
+        if (!$this->hasImageColumn()) {
+            $stmt = $this->conn->prepare(
+                "INSERT INTO rooms (room_no, room_type_id, floor, status)
+                 VALUES (?, ?, ?, ?)"
+            );
+            if (!$stmt) {
+                return 0;
+            }
+
+            $roomNo = (string)($data['room_no'] ?? '');
+            $roomTypeId = (int)($data['room_type_id'] ?? 0);
+            $floor = (string)($data['floor'] ?? '');
+            $status = (string)($data['status'] ?? 'Vacant');
+
+            $stmt->bind_param('siss', $roomNo, $roomTypeId, $floor, $status);
+            $ok = $stmt->execute();
+            $id = $ok ? (int)$stmt->insert_id : 0;
+            $stmt->close();
+            return $id;
+        }
+
         $stmt = $this->conn->prepare(
-            "INSERT INTO rooms (room_no, room_type_id, floor, status)
-             VALUES (?, ?, ?, ?)"
+            "INSERT INTO rooms (room_no, room_type_id, floor, image_path, status)
+             VALUES (?, ?, ?, ?, ?)"
         );
         if (!$stmt) {
             return 0;
@@ -98,9 +199,14 @@ final class RoomRepository
         $roomNo = (string)($data['room_no'] ?? '');
         $roomTypeId = (int)($data['room_type_id'] ?? 0);
         $floor = (string)($data['floor'] ?? '');
+        $imagePath = (string)($data['image_path'] ?? '');
         $status = (string)($data['status'] ?? 'Vacant');
 
-        $stmt->bind_param('siss', $roomNo, $roomTypeId, $floor, $status);
+        if (trim($imagePath) === '') {
+            $imagePath = null;
+        }
+
+        $stmt->bind_param('sisss', $roomNo, $roomTypeId, $floor, $imagePath, $status);
         $ok = $stmt->execute();
         $id = $ok ? (int)$stmt->insert_id : 0;
         $stmt->close();
@@ -113,9 +219,30 @@ final class RoomRepository
             return false;
         }
 
+        if (!$this->hasImageColumn()) {
+            $stmt = $this->conn->prepare(
+                "UPDATE rooms
+                 SET room_no = ?, room_type_id = ?, floor = ?, status = ?
+                 WHERE id = ?"
+            );
+            if (!$stmt) {
+                return false;
+            }
+
+            $roomNo = (string)($data['room_no'] ?? '');
+            $roomTypeId = (int)($data['room_type_id'] ?? 0);
+            $floor = (string)($data['floor'] ?? '');
+            $status = (string)($data['status'] ?? 'Vacant');
+
+            $stmt->bind_param('sissi', $roomNo, $roomTypeId, $floor, $status, $id);
+            $ok = $stmt->execute();
+            $stmt->close();
+            return $ok;
+        }
+
         $stmt = $this->conn->prepare(
             "UPDATE rooms
-             SET room_no = ?, room_type_id = ?, floor = ?, status = ?
+             SET room_no = ?, room_type_id = ?, floor = ?, image_path = ?, status = ?
              WHERE id = ?"
         );
         if (!$stmt) {
@@ -125,9 +252,14 @@ final class RoomRepository
         $roomNo = (string)($data['room_no'] ?? '');
         $roomTypeId = (int)($data['room_type_id'] ?? 0);
         $floor = (string)($data['floor'] ?? '');
+        $imagePath = (string)($data['image_path'] ?? '');
         $status = (string)($data['status'] ?? 'Vacant');
 
-        $stmt->bind_param('sissi', $roomNo, $roomTypeId, $floor, $status, $id);
+        if (trim($imagePath) === '') {
+            $imagePath = null;
+        }
+
+        $stmt->bind_param('sisssi', $roomNo, $roomTypeId, $floor, $imagePath, $status, $id);
         $ok = $stmt->execute();
         $stmt->close();
         return $ok;
