@@ -271,7 +271,11 @@ include __DIR__ . '/../../partials/sidebar.php';
                             setPreview(p);
                             return;
                         }
-                        setPreview(baseUrl + p);
+                        if (p.charAt(0) === '/') {
+                            setPreview(baseUrl + p);
+                            return;
+                        }
+                        setPreview(baseUrl + '/' + p);
                     }
 
                     if (fileInput) {

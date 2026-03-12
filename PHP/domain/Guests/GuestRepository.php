@@ -6,20 +6,21 @@ final class GuestRepository
 {
     private ?mysqli $conn;
     private ?bool $hasIdentityColumns = null;
-    private ?bool $hasCrmColumns = null;
+    private ?bool $hasPreferencesNotesColumns = null;
+    private ?bool $hasLoyaltyColumns = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
     }
 
-    private function hasCrmColumns(): bool
+    private function hasPreferencesNotesColumns(): bool
     {
-        if ($this->hasCrmColumns !== null) {
-            return $this->hasCrmColumns;
+        if ($this->hasPreferencesNotesColumns !== null) {
+            return $this->hasPreferencesNotesColumns;
         }
         if (!$this->conn) {
-            $this->hasCrmColumns = false;
+            $this->hasPreferencesNotesColumns = false;
             return false;
         }
 
@@ -27,7 +28,7 @@ final class GuestRepository
         $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
         $db = $this->conn->real_escape_string($db);
         if ($db === '') {
-            $this->hasCrmColumns = false;
+            $this->hasPreferencesNotesColumns = false;
             return false;
         }
 
@@ -36,11 +37,41 @@ final class GuestRepository
              FROM INFORMATION_SCHEMA.COLUMNS
              WHERE TABLE_SCHEMA = '{$db}'
                AND TABLE_NAME = 'guests'
-               AND COLUMN_NAME IN ('preferences','notes','loyalty_tier','loyalty_points')";
+               AND COLUMN_NAME IN ('preferences','notes')";
         $res = $this->conn->query($sql);
         $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
-        $this->hasCrmColumns = ($count === 4);
-        return $this->hasCrmColumns;
+        $this->hasPreferencesNotesColumns = ($count === 2);
+        return $this->hasPreferencesNotesColumns;
+    }
+
+    private function hasLoyaltyColumns(): bool
+    {
+        if ($this->hasLoyaltyColumns !== null) {
+            return $this->hasLoyaltyColumns;
+        }
+        if (!$this->conn) {
+            $this->hasLoyaltyColumns = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasLoyaltyColumns = false;
+            return false;
+        }
+
+        $sql =
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'guests'
+               AND COLUMN_NAME IN ('loyalty_tier','loyalty_points')";
+        $res = $this->conn->query($sql);
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasLoyaltyColumns = ($count === 2);
+        return $this->hasLoyaltyColumns;
     }
 
     private function hasIdentityColumns(): bool
@@ -84,13 +115,17 @@ final class GuestRepository
             $idSelect = $this->hasIdentityColumns()
                 ? 'id_type, id_number, id_photo_path,'
                 : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
-            $crmSelect = $this->hasCrmColumns()
-                ? 'preferences, notes, loyalty_tier, loyalty_points,'
-                : "NULL AS preferences, NULL AS notes, NULL AS loyalty_tier, 0 AS loyalty_points,";
+            $prefsSelect = $this->hasPreferencesNotesColumns()
+                ? 'preferences, notes,'
+                : 'NULL AS preferences, NULL AS notes,';
+            $loyaltySelect = $this->hasLoyaltyColumns()
+                ? 'loyalty_tier, loyalty_points,'
+                : 'NULL AS loyalty_tier, 0 AS loyalty_points,';
 
             $sql = "SELECT id, first_name, last_name, email, phone,
                            {$idSelect}
-                           {$crmSelect}
+                           {$prefsSelect}
+                           {$loyaltySelect}
                            status, created_at
                     FROM guests
                     ORDER BY id DESC LIMIT 200";
@@ -109,15 +144,19 @@ final class GuestRepository
         $idSelect = $this->hasIdentityColumns()
             ? 'id_type, id_number, id_photo_path,'
             : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
-        $crmSelect = $this->hasCrmColumns()
-            ? 'preferences, notes, loyalty_tier, loyalty_points,'
-            : "NULL AS preferences, NULL AS notes, NULL AS loyalty_tier, 0 AS loyalty_points,";
+        $prefsSelect = $this->hasPreferencesNotesColumns()
+            ? 'preferences, notes,'
+            : 'NULL AS preferences, NULL AS notes,';
+        $loyaltySelect = $this->hasLoyaltyColumns()
+            ? 'loyalty_tier, loyalty_points,'
+            : 'NULL AS loyalty_tier, 0 AS loyalty_points,';
 
         if ($this->hasIdentityColumns()) {
             $stmt = $this->conn->prepare(
                 "SELECT id, first_name, last_name, email, phone,
                         {$idSelect}
-                        {$crmSelect}
+                        {$prefsSelect}
+                        {$loyaltySelect}
                         status, created_at
                  FROM guests
                  WHERE first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone LIKE ? OR id_number LIKE ?
@@ -127,7 +166,8 @@ final class GuestRepository
             $stmt = $this->conn->prepare(
                 "SELECT id, first_name, last_name, email, phone,
                         {$idSelect}
-                        {$crmSelect}
+                        {$prefsSelect}
+                        {$loyaltySelect}
                         status, created_at
                  FROM guests
                  WHERE first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone LIKE ?
@@ -161,14 +201,18 @@ final class GuestRepository
         $idSelect = $this->hasIdentityColumns()
             ? 'id_type, id_number, id_photo_path,'
             : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
-        $crmSelect = $this->hasCrmColumns()
-            ? 'preferences, notes, loyalty_tier, loyalty_points,'
-            : "NULL AS preferences, NULL AS notes, NULL AS loyalty_tier, 0 AS loyalty_points,";
+        $prefsSelect = $this->hasPreferencesNotesColumns()
+            ? 'preferences, notes,'
+            : 'NULL AS preferences, NULL AS notes,';
+        $loyaltySelect = $this->hasLoyaltyColumns()
+            ? 'loyalty_tier, loyalty_points,'
+            : 'NULL AS loyalty_tier, 0 AS loyalty_points,';
 
         $stmt = $this->conn->prepare(
             "SELECT id, first_name, last_name, email, phone,
                     {$idSelect}
-                    {$crmSelect}
+                    {$prefsSelect}
+                    {$loyaltySelect}
                     status, created_at
              FROM guests WHERE id = ?"
         );
@@ -190,22 +234,43 @@ final class GuestRepository
         }
 
         $hasId = $this->hasIdentityColumns();
-        $hasCrm = $this->hasCrmColumns();
+        $hasPrefs = $this->hasPreferencesNotesColumns();
+        $hasLoyalty = $this->hasLoyaltyColumns();
 
-        if ($hasId && $hasCrm) {
+        if ($hasId && $hasPrefs && $hasLoyalty) {
             $stmt = $this->conn->prepare(
                 "INSERT INTO guests (first_name, last_name, email, phone, id_type, id_number, id_photo_path, preferences, notes, loyalty_tier, loyalty_points, status)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             );
-        } elseif ($hasId && !$hasCrm) {
+        } elseif ($hasId && $hasPrefs && !$hasLoyalty) {
+            $stmt = $this->conn->prepare(
+                "INSERT INTO guests (first_name, last_name, email, phone, id_type, id_number, id_photo_path, preferences, notes, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            );
+        } elseif ($hasId && !$hasPrefs && $hasLoyalty) {
+            $stmt = $this->conn->prepare(
+                "INSERT INTO guests (first_name, last_name, email, phone, id_type, id_number, id_photo_path, loyalty_tier, loyalty_points, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            );
+        } elseif ($hasId && !$hasPrefs && !$hasLoyalty) {
             $stmt = $this->conn->prepare(
                 "INSERT INTO guests (first_name, last_name, email, phone, id_type, id_number, id_photo_path, status)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             );
-        } elseif (!$hasId && $hasCrm) {
+        } elseif (!$hasId && $hasPrefs && $hasLoyalty) {
             $stmt = $this->conn->prepare(
                 "INSERT INTO guests (first_name, last_name, email, phone, preferences, notes, loyalty_tier, loyalty_points, status)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            );
+        } elseif (!$hasId && $hasPrefs && !$hasLoyalty) {
+            $stmt = $this->conn->prepare(
+                "INSERT INTO guests (first_name, last_name, email, phone, preferences, notes, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"
+            );
+        } elseif (!$hasId && !$hasPrefs && $hasLoyalty) {
+            $stmt = $this->conn->prepare(
+                "INSERT INTO guests (first_name, last_name, email, phone, loyalty_tier, loyalty_points, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"
             );
         } else {
             $stmt = $this->conn->prepare(
@@ -251,14 +316,23 @@ final class GuestRepository
         }
 
         $hasId = $this->hasIdentityColumns();
-        $hasCrm = $this->hasCrmColumns();
+        $hasPrefs = $this->hasPreferencesNotesColumns();
+        $hasLoyalty = $this->hasLoyaltyColumns();
 
-        if ($hasId && $hasCrm) {
+        if ($hasId && $hasPrefs && $hasLoyalty) {
             $stmt->bind_param('sssssssssiis', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $preferences, $notes, $tier, $points, $status);
-        } elseif ($hasId && !$hasCrm) {
+        } elseif ($hasId && $hasPrefs && !$hasLoyalty) {
+            $stmt->bind_param('ssssssssss', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $preferences, $notes, $status);
+        } elseif ($hasId && !$hasPrefs && $hasLoyalty) {
+            $stmt->bind_param('ssssssssis', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $tier, $points, $status);
+        } elseif ($hasId && !$hasPrefs && !$hasLoyalty) {
             $stmt->bind_param('ssssssss', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $status);
-        } elseif (!$hasId && $hasCrm) {
+        } elseif (!$hasId && $hasPrefs && $hasLoyalty) {
             $stmt->bind_param('sssssssis', $first, $last, $email, $phone, $preferences, $notes, $tier, $points, $status);
+        } elseif (!$hasId && $hasPrefs && !$hasLoyalty) {
+            $stmt->bind_param('sssssss', $first, $last, $email, $phone, $preferences, $notes, $status);
+        } elseif (!$hasId && !$hasPrefs && $hasLoyalty) {
+            $stmt->bind_param('sssssis', $first, $last, $email, $phone, $tier, $points, $status);
         } else {
             $stmt->bind_param('sssss', $first, $last, $email, $phone, $status);
         }
@@ -275,9 +349,10 @@ final class GuestRepository
         }
 
         $hasId = $this->hasIdentityColumns();
-        $hasCrm = $this->hasCrmColumns();
+        $hasPrefs = $this->hasPreferencesNotesColumns();
+        $hasLoyalty = $this->hasLoyaltyColumns();
 
-        if ($hasId && $hasCrm) {
+        if ($hasId && $hasPrefs && $hasLoyalty) {
             $stmt = $this->conn->prepare(
                 "UPDATE guests
                  SET first_name = ?, last_name = ?, email = ?, phone = ?,
@@ -286,17 +361,51 @@ final class GuestRepository
                      status = ?
                  WHERE id = ?"
             );
-        } elseif ($hasId && !$hasCrm) {
+        } elseif ($hasId && $hasPrefs && !$hasLoyalty) {
+            $stmt = $this->conn->prepare(
+                "UPDATE guests
+                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
+                     id_type = ?, id_number = ?, id_photo_path = ?,
+                     preferences = ?, notes = ?,
+                     status = ?
+                 WHERE id = ?"
+            );
+        } elseif ($hasId && !$hasPrefs && $hasLoyalty) {
+            $stmt = $this->conn->prepare(
+                "UPDATE guests
+                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
+                     id_type = ?, id_number = ?, id_photo_path = ?,
+                     loyalty_tier = ?, loyalty_points = ?,
+                     status = ?
+                 WHERE id = ?"
+            );
+        } elseif ($hasId && !$hasPrefs && !$hasLoyalty) {
             $stmt = $this->conn->prepare(
                 "UPDATE guests
                  SET first_name = ?, last_name = ?, email = ?, phone = ?, id_type = ?, id_number = ?, id_photo_path = ?, status = ?
                  WHERE id = ?"
             );
-        } elseif (!$hasId && $hasCrm) {
+        } elseif (!$hasId && $hasPrefs && $hasLoyalty) {
             $stmt = $this->conn->prepare(
                 "UPDATE guests
                  SET first_name = ?, last_name = ?, email = ?, phone = ?,
                      preferences = ?, notes = ?, loyalty_tier = ?, loyalty_points = ?,
+                     status = ?
+                 WHERE id = ?"
+            );
+        } elseif (!$hasId && $hasPrefs && !$hasLoyalty) {
+            $stmt = $this->conn->prepare(
+                "UPDATE guests
+                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
+                     preferences = ?, notes = ?,
+                     status = ?
+                 WHERE id = ?"
+            );
+        } elseif (!$hasId && !$hasPrefs && $hasLoyalty) {
+            $stmt = $this->conn->prepare(
+                "UPDATE guests
+                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
+                     loyalty_tier = ?, loyalty_points = ?,
                      status = ?
                  WHERE id = ?"
             );
@@ -344,12 +453,20 @@ final class GuestRepository
             $tier = null;
         }
 
-        if ($hasId && $hasCrm) {
+        if ($hasId && $hasPrefs && $hasLoyalty) {
             $stmt->bind_param('ssssssssssisi', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $preferences, $notes, $tier, $points, $status, $id);
-        } elseif ($hasId && !$hasCrm) {
+        } elseif ($hasId && $hasPrefs && !$hasLoyalty) {
+            $stmt->bind_param('ssssssssssi', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $preferences, $notes, $status, $id);
+        } elseif ($hasId && !$hasPrefs && $hasLoyalty) {
+            $stmt->bind_param('ssssssssisi', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $tier, $points, $status, $id);
+        } elseif ($hasId && !$hasPrefs && !$hasLoyalty) {
             $stmt->bind_param('ssssssssi', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $status, $id);
-        } elseif (!$hasId && $hasCrm) {
+        } elseif (!$hasId && $hasPrefs && $hasLoyalty) {
             $stmt->bind_param('sssssssisi', $first, $last, $email, $phone, $preferences, $notes, $tier, $points, $status, $id);
+        } elseif (!$hasId && $hasPrefs && !$hasLoyalty) {
+            $stmt->bind_param('sssssssi', $first, $last, $email, $phone, $preferences, $notes, $status, $id);
+        } elseif (!$hasId && !$hasPrefs && $hasLoyalty) {
+            $stmt->bind_param('sssssisi', $first, $last, $email, $phone, $tier, $points, $status, $id);
         } else {
             $stmt->bind_param('sssssi', $first, $last, $email, $phone, $status, $id);
         }

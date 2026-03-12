@@ -106,13 +106,24 @@ include __DIR__ . '/../../partials/sidebar.php';
                 <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars($guest['id_number'] ?? '') ?></div>
             </div>
             <?php if (trim((string)($guest['id_photo_path'] ?? '')) !== ''): ?>
+                <?php
+                    $idPhotoPath = trim((string)($guest['id_photo_path'] ?? ''));
+                    $idPhotoUrl = $idPhotoPath;
+                    if (!preg_match('/^https?:\/\//i', $idPhotoPath)) {
+                        if (substr($idPhotoPath, 0, 1) === '/') {
+                            $idPhotoUrl = $APP_BASE_URL . $idPhotoPath;
+                        } else {
+                            $idPhotoUrl = $APP_BASE_URL . '/' . $idPhotoPath;
+                        }
+                    }
+                ?>
                 <div class="md:col-span-2">
                     <div class="text-xs text-gray-500 uppercase tracking-wider">ID Photo</div>
                     <div class="mt-2">
-                        <a href="<?= htmlspecialchars($APP_BASE_URL . (string)$guest['id_photo_path']) ?>" target="_blank" class="text-blue-600 hover:underline text-sm">Open ID photo</a>
+                        <a href="<?= htmlspecialchars($idPhotoUrl) ?>" target="_blank" class="text-blue-600 hover:underline text-sm">Open ID photo</a>
                     </div>
                     <div class="mt-2 rounded-xl border border-gray-100 bg-gray-50 overflow-hidden">
-                        <img src="<?= htmlspecialchars($APP_BASE_URL . (string)$guest['id_photo_path']) ?>" alt="ID Photo" style="max-height:260px;width:100%;object-fit:contain;" />
+                        <img src="<?= htmlspecialchars($idPhotoUrl) ?>" alt="ID Photo" style="max-height:260px;width:100%;object-fit:contain;" />
                     </div>
                 </div>
             <?php endif; ?>

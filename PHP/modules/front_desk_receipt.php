@@ -57,15 +57,48 @@ $APP_BASE_URL = App::baseUrl();
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title><?= htmlspecialchars($pageTitle) ?></title>
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <link rel="stylesheet" href="<?= htmlspecialchars($APP_BASE_URL) ?>/CSS/index.css" />
     <?php include __DIR__ . '/../partials/styles.php'; ?>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @media print {
+            @page { size: A4 landscape; margin: 4mm; }
+            html, body {
+                width: 100% !important;
+                height: auto !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: visible !important;
+            }
             #sidebar, nav, .no-print { display: none !important; }
-            #content { margin-left: 0 !important; }
-            main { padding: 0 !important; }
-            .print-card { border: none !important; box-shadow: none !important; }
+            #content { margin-left: 0 !important; overflow: visible !important; height: auto !important; }
+            main { padding: 0 !important; width: 100% !important; overflow: visible !important; height: auto !important; }
+            .print-card {
+                border: none !important;
+                box-shadow: none !important;
+                width: 100% !important;
+                max-width: 260mm !important;
+                margin: 0 auto !important;
+                padding: 8px !important;
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+            }
+            .print-card * { break-inside: avoid !important; page-break-inside: avoid !important; }
+            .print-card .mb-6 { margin-bottom: 8px !important; }
+            .print-card .mb-4 { margin-bottom: 8px !important; }
+            .print-card .mt-6 { margin-top: 8px !important; }
+            .print-card .mt-4 { margin-top: 8px !important; }
+            .print-card .p-6 { padding: 8px !important; }
+            .print-card .p-4 { padding: 8px !important; }
+            .print-card .gap-4 { gap: 8px !important; }
+            .print-card .text-xs { font-size: 0.65rem !important; line-height: 0.85rem !important; }
+            .print-card .text-sm { font-size: 0.78rem !important; line-height: 1.05rem !important; }
+            .print-card .text-lg { font-size: 0.92rem !important; line-height: 1.2rem !important; }
+            .print-card .text-2xl { font-size: 1.05rem !important; line-height: 1.35rem !important; }
+            .print-card { transform: scale(0.88); transform-origin: top center; }
+            .print-card .mt-2 { margin-top: 4px !important; }
+            .print-card div[style*="height:24px"] { height: 14px !important; }
             body { background: #fff !important; }
         }
 

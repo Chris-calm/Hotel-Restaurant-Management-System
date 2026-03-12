@@ -143,9 +143,9 @@ if ($conn && $currentUserId > 0) {
 
     #sidebar .side-menu.top li.dropdown.open .dropdown-menu {
         display: block;
-        position: absolute;
-        top: 100%;
-        left: 0;
+        position: relative;
+        top: auto;
+        left: auto;
         width: 100%;
         background: #e8e8e8;
         animation: slideDown 0.3s ease;
@@ -198,12 +198,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
 
             dropdown.classList.toggle('open');
-
-            if (document.querySelector('#sidebar .dropdown.open')) {
-                sidebar.style.overflowY = 'hidden';
-            } else {
-                sidebar.style.overflowY = 'auto';
-            }
         }
     });
 });

@@ -538,12 +538,6 @@ include __DIR__ . '/../partials/sidebar.php';
                                 <div class="text-sm font-medium text-gray-900 mt-1">₱<span id="pv_balance_card"><?= number_format((float)$balancePreview, 2) ?></span></div>
                             </div>
                         </div>
-                        <?php if ($selectedRoom && (trim((string)($selectedRoom['room_image_path'] ?? '')) !== '' || trim((string)($selectedRoom['room_type_image_path'] ?? '')) !== '')): ?>
-                            <div class="mt-4">
-                                <?php $img = trim((string)($selectedRoom['room_image_path'] ?? '')) !== '' ? (string)$selectedRoom['room_image_path'] : (string)($selectedRoom['room_type_image_path'] ?? ''); ?>
-                                <img src="<?= htmlspecialchars($APP_BASE_URL . $img) ?>" alt="Room" style="max-height:220px;border-radius:14px;" />
-                            </div>
-                        <?php endif; ?>
                     </div>
 
                     <div>

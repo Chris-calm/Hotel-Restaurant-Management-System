@@ -65,18 +65,57 @@ include __DIR__ . '/../../partials/sidebar.php';
                             $badge = 'border-red-200 bg-red-50 text-red-700';
                         }
                         $name = trim((string)($g['first_name'] ?? '') . ' ' . (string)($g['last_name'] ?? ''));
+
+                        $idPhoto = trim((string)($g['id_photo_path'] ?? ''));
+                        $tier = trim((string)($g['loyalty_tier'] ?? ''));
+                        if ($tier === '') {
+                            $tier = 'None';
+                        }
+                        $points = (int)($g['loyalty_points'] ?? 0);
+                        $avatarSrc = '';
+                        if ($idPhoto !== '') {
+                            if (preg_match('/^https?:\/\//i', $idPhoto)) {
+                                $avatarSrc = $idPhoto;
+                            } elseif (substr($idPhoto, 0, 1) === '/') {
+                                $avatarSrc = $APP_BASE_URL . $idPhoto;
+                            } else {
+                                $avatarSrc = $APP_BASE_URL . '/' . $idPhoto;
+                            }
+                        }
+                        $initials = '';
+                        if ($name !== '') {
+                            $parts = preg_split('/\s+/', $name);
+                            if (is_array($parts) && isset($parts[0])) {
+                                $initials .= strtoupper(substr((string)$parts[0], 0, 1));
+                            }
+                            if (is_array($parts) && count($parts) > 1) {
+                                $initials .= strtoupper(substr((string)$parts[count($parts) - 1], 0, 1));
+                            }
+                        }
+                        if ($initials === '') {
+                            $initials = 'G';
+                        }
                     ?>
                     <div class="rounded-xl border border-gray-100 bg-white p-4">
                         <div class="flex items-start justify-between gap-3">
-                            <div>
-                                <div class="text-sm font-semibold text-gray-900"><?= htmlspecialchars($name) ?></div>
+                            <div class="flex items-start gap-3">
+                                <div class="shrink-0">
+                                    <?php if ($avatarSrc !== ''): ?>
+                                        <img src="<?= htmlspecialchars($avatarSrc) ?>" alt="" class="w-10 h-10 rounded-full" style="object-fit:cover;" />
+                                    <?php else: ?>
+                                        <div class="w-10 h-10 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center text-xs font-semibold">
+                                            <?= htmlspecialchars($initials) ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <div>
+                                    <div class="text-sm font-semibold text-gray-900"><?= htmlspecialchars($name) ?></div>
                                 <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($g['email'] ?? '')) ?></div>
                                 <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($g['phone'] ?? '')) ?></div>
-                                <?php if (trim((string)($g['loyalty_tier'] ?? '')) !== '' || (int)($g['loyalty_points'] ?? 0) > 0): ?>
                                     <div class="text-xs text-gray-500 mt-2">
-                                        <?= htmlspecialchars((string)($g['loyalty_tier'] ?? '')) ?><?= trim((string)($g['loyalty_tier'] ?? '')) !== '' ? ' • ' : '' ?><?= htmlspecialchars((string)((int)($g['loyalty_points'] ?? 0))) ?> pts
+                                        <?= htmlspecialchars($tier) ?> • <?= htmlspecialchars((string)$points) ?> pts
                                     </div>
-                                <?php endif; ?>
+                                </div>
                             </div>
                             <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>">
                                 <?= htmlspecialchars($status) ?>
