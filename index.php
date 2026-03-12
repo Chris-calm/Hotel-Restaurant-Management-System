@@ -2,6 +2,9 @@
 session_start();
 require_once 'PHP/db_connect.php';
 require_once 'PHP/email_config.php';
+require_once 'PHP/core/bootstrap.php';
+
+$APP_BASE_URL = App::baseUrl();
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $username = trim($_POST['username']);
@@ -425,7 +428,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
       <div class="login-form-container">
         <div class="logo-section">
           <div class="logo-container">
-            <img src="PICTURES/hms-logo.svg" alt="Hotel Management System Logo" class="logo-icon">
+            <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/H.png" alt="Hotel Management System Logo" class="logo-icon">
           </div>
           <h1>Sign in</h1>
         </div>

@@ -9,10 +9,31 @@ $APP_BASE_URL = App::baseUrl();
 $currentUserProfilePic = $APP_BASE_URL . '/PICTURES/Ser.jpg';
 $currentUserName = $_SESSION['username'] ?? 'User';
 $currentUserRole = $_SESSION['role'] ?? 'staff';
+
+$conn = Database::getConnection();
+$currentUserId = (int)($_SESSION['user_id'] ?? 0);
+if ($conn && $currentUserId > 0) {
+    try {
+        $stmt = $conn->prepare("SELECT profile_picture FROM users WHERE id = ? LIMIT 1");
+        if ($stmt instanceof mysqli_stmt) {
+            $stmt->bind_param('i', $currentUserId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $row = $res->fetch_assoc();
+            $stmt->close();
+
+            $pp = trim((string)($row['profile_picture'] ?? ''));
+            if ($pp !== '') {
+                $currentUserProfilePic = (substr($pp, 0, 1) === '/') ? ($APP_BASE_URL . $pp) : $pp;
+            }
+        }
+    } catch (Throwable $e) {
+    }
+}
 ?>
 <section id="sidebar">
     <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/Dashboard.php" class="brand">
-        <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PICTURES/hotel-ser-logo.png" alt="Hotel Ser Reposer Et Diner Logo" class="brand-logo" style="width: 48px; height: 48px;">
+        <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/H.png" alt="Hotel Ser Reposer Et Diner Logo" class="brand-logo" style="width: 48px; height: 48px;">
         <span class="text" style="font-size: 14px; font-weight: 600;">Hotel Ser Reposer Et Diner</span>
     </a>
 
