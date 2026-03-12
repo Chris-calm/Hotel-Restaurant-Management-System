@@ -6,7 +6,14 @@ require_once __DIR__ . '/../core/bootstrap.php';
 require_once __DIR__ . '/../domain/Reservations/ReservationService.php';
 
 $conn = Database::getConnection();
-$service = new ReservationService(new ReservationRepository($conn));
+$roomRepo = new RoomRepository($conn);
+$maintenanceService = new MaintenanceService(new MaintenanceRepository($conn), $roomRepo);
+$service = new ReservationService(
+    new ReservationRepository($conn),
+    new HousekeepingRepository($conn),
+    $roomRepo,
+    $maintenanceService
+);
 
 $id = Request::int('get', 'id', 0);
 if ($id <= 0) {
@@ -97,6 +104,14 @@ $APP_BASE_URL = App::baseUrl();
                     </div>
                     <div class="text-sm text-gray-600 mt-1"><?= htmlspecialchars($reservation['phone'] ?? '') ?></div>
                     <div class="text-sm text-gray-600"><?= htmlspecialchars($reservation['email'] ?? '') ?></div>
+                    <?php if (trim((string)($reservation['id_type'] ?? '')) !== '' || trim((string)($reservation['id_number'] ?? '')) !== ''): ?>
+                        <div class="text-sm text-gray-600 mt-1"><?= htmlspecialchars(trim((string)($reservation['id_type'] ?? '') . ' ' . (string)($reservation['id_number'] ?? ''))) ?></div>
+                    <?php endif; ?>
+                    <?php if (trim((string)($reservation['id_photo_path'] ?? '')) !== ''): ?>
+                        <div class="text-xs text-gray-500 mt-1">
+                            <a class="text-blue-600 hover:underline" target="_blank" href="<?= htmlspecialchars($APP_BASE_URL . (string)$reservation['id_photo_path']) ?>">Open ID photo</a>
+                        </div>
+                    <?php endif; ?>
                 </div>
 
                 <div class="rounded-lg border border-gray-100 p-4">

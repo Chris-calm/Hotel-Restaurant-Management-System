@@ -11,7 +11,14 @@ $conn = Database::getConnection();
 
 $guestService = new GuestService(new GuestRepository($conn));
 $roomTypeService = new RoomTypeService(new RoomTypeRepository($conn));
-$reservationService = new ReservationService(new ReservationRepository($conn));
+$roomRepo = new RoomRepository($conn);
+$maintenanceService = new MaintenanceService(new MaintenanceRepository($conn), $roomRepo);
+$reservationService = new ReservationService(
+    new ReservationRepository($conn),
+    new HousekeepingRepository($conn),
+    $roomRepo,
+    $maintenanceService
+);
 
 $pendingApprovals = [];
 
@@ -32,6 +39,15 @@ if ($filters['checkin_date'] !== '' && $filters['checkout_date'] !== '') {
         $filters['checkout_date'],
         $filters['room_type_id']
     );
+}
+
+$nights = 0;
+if ($filters['checkin_date'] !== '' && $filters['checkout_date'] !== '') {
+    $n1 = strtotime($filters['checkin_date']);
+    $n2 = strtotime($filters['checkout_date']);
+    if ($n1 !== false && $n2 !== false && $n2 > $n1) {
+        $nights = (int)round(($n2 - $n1) / 86400);
+    }
 }
 
 $errors = [];
@@ -84,6 +100,14 @@ if (Request::isPost()) {
 
     $filters['checkin_date'] = $data['checkin_date'];
     $filters['checkout_date'] = $data['checkout_date'];
+    $nights = 0;
+    if ($filters['checkin_date'] !== '' && $filters['checkout_date'] !== '') {
+        $n1 = strtotime($filters['checkin_date']);
+        $n2 = strtotime($filters['checkout_date']);
+        if ($n1 !== false && $n2 !== false && $n2 > $n1) {
+            $nights = (int)round(($n2 - $n1) / 86400);
+        }
+    }
     $availableRooms = [];
     if ($filters['checkin_date'] !== '' && $filters['checkout_date'] !== '') {
         $availableRooms = $reservationService->findAvailableRooms(
@@ -93,6 +117,26 @@ if (Request::isPost()) {
         );
     }
 }
+
+$selectedRoom = null;
+foreach ($availableRooms as $r) {
+    if ((int)($data['room_id'] ?? 0) === (int)($r['id'] ?? 0)) {
+        $selectedRoom = $r;
+        break;
+    }
+}
+
+$ratePerNight = 0.0;
+if ($selectedRoom) {
+    $ratePerNight = (float)($selectedRoom['base_rate'] ?? 0);
+}
+if (isset($data['rate']) && is_numeric($data['rate'])) {
+    $ratePerNight = (float)$data['rate'];
+}
+
+$staySubtotal = $nights * $ratePerNight;
+$depositPreview = is_numeric((string)($data['deposit_amount'] ?? '')) ? (float)$data['deposit_amount'] : 0.0;
+$balancePreview = max(0, $staySubtotal - $depositPreview);
 
 $pageTitle = 'Front Desk - Hotel Management System';
 
@@ -232,6 +276,29 @@ include __DIR__ . '/../partials/sidebar.php';
                         <?php if ($filters['checkin_date'] === '' || $filters['checkout_date'] === ''): ?>
                             <div class="text-xs text-gray-500 mt-1">Use “Search Availability” to load available rooms for a date range.</div>
                         <?php endif; ?>
+                    </div>
+
+                    <div class="md:col-span-2 rounded-lg border border-gray-100 p-4 bg-gray-50">
+                        <div class="text-xs text-gray-500 mb-2">Payment Preview</div>
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <div>
+                                <div class="text-xs text-gray-500">Nights</div>
+                                <div class="text-sm font-medium text-gray-900"><?= (int)$nights ?></div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-500">Rate / Night</div>
+                                <div class="text-sm font-medium text-gray-900">₱<?= number_format((float)$ratePerNight, 2) ?></div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-500">Stay Total</div>
+                                <div class="text-sm font-medium text-gray-900">₱<?= number_format((float)$staySubtotal, 2) ?></div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-500">Balance</div>
+                                <div class="text-sm font-medium text-gray-900">₱<?= number_format((float)$balancePreview, 2) ?></div>
+                            </div>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-2">Deposit entered: ₱<?= number_format((float)$depositPreview, 2) ?></div>
                     </div>
 
                     <div>

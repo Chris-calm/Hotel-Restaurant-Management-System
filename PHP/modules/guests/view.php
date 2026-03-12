@@ -19,6 +19,8 @@ $flash = Flash::get();
 $pageTitle = 'Guest - Hotel Management System';
 $pendingApprovals = [];
 
+$APP_BASE_URL = App::baseUrl();
+
 include __DIR__ . '/../../partials/page_start.php';
 include __DIR__ . '/../../partials/sidebar.php';
 ?>
@@ -62,6 +64,29 @@ include __DIR__ . '/../../partials/sidebar.php';
                 <div class="text-xs text-gray-500 uppercase tracking-wider">Phone</div>
                 <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars($guest['phone'] ?? '') ?></div>
             </div>
+            <div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">ID Type</div>
+                <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars($guest['id_type'] ?? '') ?></div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">ID Number</div>
+                <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars($guest['id_number'] ?? '') ?></div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">ID Photo Path</div>
+                <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars($guest['id_photo_path'] ?? '') ?></div>
+            </div>
+            <?php if (trim((string)($guest['id_photo_path'] ?? '')) !== ''): ?>
+                <div class="md:col-span-2">
+                    <div class="text-xs text-gray-500 uppercase tracking-wider">ID Photo Preview</div>
+                    <div class="mt-2">
+                        <a href="<?= htmlspecialchars($APP_BASE_URL . (string)$guest['id_photo_path']) ?>" target="_blank" class="text-blue-600 hover:underline text-sm">Open ID photo</a>
+                    </div>
+                    <div class="mt-2">
+                        <img src="<?= htmlspecialchars($APP_BASE_URL . (string)$guest['id_photo_path']) ?>" alt="ID Photo" style="max-height:220px;" />
+                    </div>
+                </div>
+            <?php endif; ?>
             <div>
                 <div class="text-xs text-gray-500 uppercase tracking-wider">Status</div>
                 <div class="text-sm text-gray-900 mt-1"><?= htmlspecialchars($guest['status'] ?? '') ?></div>

@@ -2,8 +2,10 @@
 require_once __DIR__ . '/rbac_middleware.php';
 RBACMiddleware::checkPageAccess();
 
-include __DIR__ . '/db_connect.php';
+require_once __DIR__ . '/core/bootstrap.php';
 include __DIR__ . '/partials/functions.php';
+
+$conn = Database::getConnection();
 
 $pendingApprovals = [];
 
@@ -206,7 +208,16 @@ if ($conn) {
         $result = $conn->query("SELECT COUNT(*) as count FROM inventory_items WHERE quantity > 0");
         $inStockItems = $result ? (int)($result->fetch_assoc()['count'] ?? 0) : 0;
 
-        $result = $conn->query("SELECT reference_no, guest_name, status, created_at FROM reservations ORDER BY created_at DESC LIMIT 5");
+        $result = $conn->query(
+            "SELECT r.reference_no,
+                    CONCAT(g.first_name, ' ', g.last_name) AS guest_name,
+                    r.status,
+                    r.created_at
+             FROM reservations r
+             INNER JOIN guests g ON g.id = r.guest_id
+             ORDER BY r.created_at DESC
+             LIMIT 5"
+        );
         if ($result) {
             while ($row = $result->fetch_assoc()) {
                 $recentReservations[] = $row;

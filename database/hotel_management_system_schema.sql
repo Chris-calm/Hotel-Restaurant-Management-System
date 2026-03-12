@@ -14,12 +14,28 @@ CREATE TABLE IF NOT EXISTS users (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS user_otps (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED NOT NULL,
+  username VARCHAR(60) NOT NULL,
+  otp_code VARCHAR(10) NOT NULL,
+  email VARCHAR(120) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_user_otps_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS guests (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   first_name VARCHAR(80) NOT NULL,
   last_name VARCHAR(80) NOT NULL,
   email VARCHAR(120) NULL,
   phone VARCHAR(40) NULL,
+  id_type VARCHAR(40) NULL,
+  id_number VARCHAR(60) NULL,
+  id_photo_path VARCHAR(255) NULL,
   status ENUM('Lead','Booked','Checked In','Checked Out','Blacklisted') NOT NULL DEFAULT 'Lead',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
@@ -105,6 +121,160 @@ CREATE TABLE IF NOT EXISTS housekeeping_tasks (
     ON UPDATE CASCADE ON DELETE SET NULL,
   CONSTRAINT fk_housekeeping_created_by
     FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS assets (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  asset_code VARCHAR(40) NOT NULL UNIQUE,
+  name VARCHAR(120) NOT NULL,
+  asset_type ENUM('Room','Facility','Equipment') NOT NULL DEFAULT 'Equipment',
+  room_id INT UNSIGNED NULL,
+  location VARCHAR(120) NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_assets_room
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS maintenance_categories (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(80) NOT NULL UNIQUE,
+  is_active TINYINT(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS vendors (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(120) NOT NULL,
+  contact_person VARCHAR(120) NULL,
+  phone VARCHAR(40) NULL,
+  email VARCHAR(120) NULL,
+  notes TEXT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS maintenance_tickets (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ticket_no VARCHAR(30) NOT NULL UNIQUE,
+  room_id INT UNSIGNED NULL,
+  asset_id INT UNSIGNED NULL,
+  category_id INT UNSIGNED NULL,
+  priority ENUM('Low','Normal','High','Urgent') NOT NULL DEFAULT 'Normal',
+  status ENUM('Open','Assigned','In Progress','On Hold','Resolved','Closed','Cancelled') NOT NULL DEFAULT 'Open',
+  title VARCHAR(160) NOT NULL,
+  description TEXT NULL,
+  reported_by INT UNSIGNED NULL,
+  assigned_to INT UNSIGNED NULL,
+  vendor_id INT UNSIGNED NULL,
+  requires_downtime TINYINT(1) NOT NULL DEFAULT 0,
+  room_out_of_order_from DATETIME NULL,
+  room_out_of_order_to DATETIME NULL,
+  opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at DATETIME NULL,
+  closed_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_maint_ticket_room
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_maint_ticket_asset
+    FOREIGN KEY (asset_id) REFERENCES assets(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_maint_ticket_category
+    FOREIGN KEY (category_id) REFERENCES maintenance_categories(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_maint_ticket_reported_by
+    FOREIGN KEY (reported_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_maint_ticket_assigned_to
+    FOREIGN KEY (assigned_to) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_maint_ticket_vendor
+    FOREIGN KEY (vendor_id) REFERENCES vendors(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS maintenance_work_orders (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  work_order_no VARCHAR(30) NOT NULL UNIQUE,
+  ticket_id INT UNSIGNED NOT NULL,
+  assigned_to INT UNSIGNED NULL,
+  vendor_id INT UNSIGNED NULL,
+  scheduled_at DATETIME NULL,
+  started_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  status ENUM('Planned','In Progress','Completed','Cancelled') NOT NULL DEFAULT 'Planned',
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_maint_wo_ticket
+    FOREIGN KEY (ticket_id) REFERENCES maintenance_tickets(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_maint_wo_assigned
+    FOREIGN KEY (assigned_to) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_maint_wo_vendor
+    FOREIGN KEY (vendor_id) REFERENCES vendors(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS maintenance_logs (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ticket_id INT UNSIGNED NOT NULL,
+  work_order_id INT UNSIGNED NULL,
+  log_type ENUM('Note','Status Change','Assignment','Vendor','Downtime','Cost') NOT NULL DEFAULT 'Note',
+  message TEXT NOT NULL,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_maint_logs_ticket
+    FOREIGN KEY (ticket_id) REFERENCES maintenance_tickets(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_maint_logs_work_order
+    FOREIGN KEY (work_order_id) REFERENCES maintenance_work_orders(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_maint_logs_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS maintenance_costs (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ticket_id INT UNSIGNED NOT NULL,
+  work_order_id INT UNSIGNED NULL,
+  cost_type ENUM('Labor','Part','Vendor','Other') NOT NULL,
+  description VARCHAR(200) NOT NULL,
+  qty DECIMAL(10,2) NOT NULL DEFAULT 1.00,
+  unit_cost DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  total_cost DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  reference_no VARCHAR(60) NULL,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_maint_costs_ticket
+    FOREIGN KEY (ticket_id) REFERENCES maintenance_tickets(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_maint_costs_work_order
+    FOREIGN KEY (work_order_id) REFERENCES maintenance_work_orders(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_maint_costs_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS room_status_history (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  room_id INT UNSIGNED NOT NULL,
+  old_status VARCHAR(30) NULL,
+  new_status VARCHAR(30) NOT NULL,
+  source VARCHAR(30) NOT NULL,
+  source_id INT UNSIGNED NULL,
+  changed_by INT UNSIGNED NULL,
+  changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_room_status_hist_room
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_room_status_hist_user
+    FOREIGN KEY (changed_by) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;
 

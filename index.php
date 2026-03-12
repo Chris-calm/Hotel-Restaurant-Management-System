@@ -16,7 +16,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     }
 
     // Prepare statement to prevent SQL injection
-    $stmt = $conn->prepare("SELECT id, username, password, role, email FROM users WHERE username = ?");
+    $stmt = $conn->prepare("SELECT id, username, password_hash, role, email FROM users WHERE username = ?");
     $stmt->bind_param("s", $username);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -25,7 +25,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $user = $result->fetch_assoc();
         
         // Verify password using password_verify for hashed passwords
-        if (password_verify($password, $user['password'])) {
+        $hash = (string)($user['password_hash'] ?? '');
+        if ($hash !== '' && password_verify($password, $hash)) {
             
             // Check if user has OTP enabled (superadmin and admin)
             if (in_array($username, ['superadmin', 'admin']) && !empty($user['email'])) {

@@ -33,6 +33,12 @@ final class GuestService
         if (!Validator::required($data['phone'] ?? null)) {
             $errors['phone'] = 'Phone is required.';
         }
+
+        $idNumber = trim((string)($data['id_number'] ?? ''));
+        $idType = trim((string)($data['id_type'] ?? ''));
+        if ($idNumber !== '' && $idType === '') {
+            $errors['id_type'] = 'ID type is required when ID number is provided.';
+        }
         if (!Validator::inArray($data['status'] ?? 'Lead', self::allowedStatuses())) {
             $errors['status'] = 'Status is invalid.';
         }

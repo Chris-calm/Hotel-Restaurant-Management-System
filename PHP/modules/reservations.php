@@ -8,7 +8,16 @@ require_once __DIR__ . '/../domain/Reservations/ReservationService.php';
 $pendingApprovals = [];
 
 $conn = Database::getConnection();
-$service = new ReservationService(new ReservationRepository($conn));
+$roomRepo = new RoomRepository($conn);
+$maintenanceService = new MaintenanceService(new MaintenanceRepository($conn), $roomRepo);
+$service = new ReservationService(
+    new ReservationRepository($conn),
+    new HousekeepingRepository($conn),
+    $roomRepo,
+    $maintenanceService
+);
+
+$APP_BASE_URL = App::baseUrl();
 
 $filters = [
     'q' => (string)Request::get('q', ''),
@@ -104,6 +113,15 @@ include __DIR__ . '/../partials/sidebar.php';
                                 <td class="py-3 pr-4">
                                     <div class="text-gray-900"><?= htmlspecialchars(trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? ''))) ?></div>
                                     <div class="text-xs text-gray-500"><?= htmlspecialchars($r['phone'] ?? '') ?></div>
+                                    <div class="text-xs text-gray-500"><?= htmlspecialchars($r['email'] ?? '') ?></div>
+                                    <?php if (trim((string)($r['id_type'] ?? '')) !== '' || trim((string)($r['id_number'] ?? '')) !== ''): ?>
+                                        <div class="text-xs text-gray-500"><?= htmlspecialchars(trim((string)($r['id_type'] ?? '') . ' ' . (string)($r['id_number'] ?? ''))) ?></div>
+                                    <?php endif; ?>
+                                    <?php if (trim((string)($r['id_photo_path'] ?? '')) !== ''): ?>
+                                        <div class="text-xs text-gray-500">
+                                            <a class="text-blue-600 hover:underline" target="_blank" href="<?= htmlspecialchars($APP_BASE_URL . (string)$r['id_photo_path']) ?>">Open ID photo</a>
+                                        </div>
+                                    <?php endif; ?>
                                 </td>
                                 <td class="py-3 pr-4">
                                     <div class="text-gray-900"><?= htmlspecialchars(($r['room_no'] ?? '-') !== '' ? ('Room ' . ($r['room_no'] ?? '-')) : '-') ?></div>

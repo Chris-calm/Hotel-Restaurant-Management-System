@@ -5,10 +5,41 @@ require_once __DIR__ . '/../../core/Database.php';
 final class ReservationRepository
 {
     private ?mysqli $conn;
+    private ?bool $hasGuestIdentityColumns = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasGuestIdentityColumns(): bool
+    {
+        if ($this->hasGuestIdentityColumns !== null) {
+            return $this->hasGuestIdentityColumns;
+        }
+        if (!$this->conn) {
+            $this->hasGuestIdentityColumns = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasGuestIdentityColumns = false;
+            return false;
+        }
+
+        $sql =
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'guests'
+               AND COLUMN_NAME IN ('id_type','id_number','id_photo_path')";
+        $res = $this->conn->query($sql);
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasGuestIdentityColumns = ($count === 3);
+        return $this->hasGuestIdentityColumns;
     }
 
     public function listGuests(string $q = ''): array
@@ -216,10 +247,15 @@ final class ReservationRepository
             return null;
         }
 
+        $guestIdentitySelect = $this->hasGuestIdentityColumns()
+            ? 'g.id_type, g.id_number, g.id_photo_path,'
+            : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
+
         $stmt = $this->conn->prepare(
             "SELECT r.id, r.reference_no, r.source, r.status, r.checkin_date, r.checkout_date,
                     r.deposit_amount, r.payment_method, r.notes, r.created_at,
                     g.id AS guest_id, g.first_name, g.last_name, g.email, g.phone,
+                    {$guestIdentitySelect}
                     rr.room_id, rr.room_type_id, rr.rate, rr.adults, rr.children,
                     rooms.room_no, rooms.floor,
                     rt.code AS room_type_code, rt.name AS room_type_name
@@ -254,10 +290,15 @@ final class ReservationRepository
         $from = trim((string)($filters['checkin_from'] ?? ''));
         $to = trim((string)($filters['checkin_to'] ?? ''));
 
+        $guestIdentitySelect = $this->hasGuestIdentityColumns()
+            ? 'g.id_type, g.id_number, g.id_photo_path,'
+            : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
+
         $sql =
             "SELECT r.id, r.reference_no, r.status, r.checkin_date, r.checkout_date,
                     r.deposit_amount, r.payment_method, r.created_at,
-                    g.first_name, g.last_name, g.phone,
+                    g.first_name, g.last_name, g.phone, g.email,
+                    {$guestIdentitySelect}
                     rooms.room_no,
                     rt.name AS room_type_name
              FROM reservations r

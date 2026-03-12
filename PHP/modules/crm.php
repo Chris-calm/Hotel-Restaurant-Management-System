@@ -2,8 +2,9 @@
 require_once __DIR__ . '/../rbac_middleware.php';
 RBACMiddleware::checkPageAccess();
 
-include __DIR__ . '/../db_connect.php';
-include __DIR__ . '/../partials/functions.php';
+require_once __DIR__ . '/../core/bootstrap.php';
+
+$conn = Database::getConnection();
 
 $pendingApprovals = [];
 

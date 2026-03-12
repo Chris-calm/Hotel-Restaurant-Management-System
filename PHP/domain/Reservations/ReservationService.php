@@ -2,14 +2,29 @@
 
 require_once __DIR__ . '/../../core/Validator.php';
 require_once __DIR__ . '/ReservationRepository.php';
+require_once __DIR__ . '/../Housekeeping/HousekeepingRepository.php';
+require_once __DIR__ . '/../Rooms/RoomRepository.php';
+require_once __DIR__ . '/../Maintenance/MaintenanceService.php';
+require_once __DIR__ . '/../Maintenance/MaintenanceRepository.php';
 
 final class ReservationService
 {
     private ReservationRepository $repo;
+    private ?HousekeepingRepository $housekeepingRepo;
+    private ?RoomRepository $roomRepo;
+    private ?MaintenanceService $maintenanceService;
 
-    public function __construct(ReservationRepository $repo)
+    public function __construct(
+        ReservationRepository $repo,
+        ?HousekeepingRepository $housekeepingRepo = null,
+        ?RoomRepository $roomRepo = null,
+        ?MaintenanceService $maintenanceService = null
+    )
     {
         $this->repo = $repo;
+        $this->housekeepingRepo = $housekeepingRepo;
+        $this->roomRepo = $roomRepo;
+        $this->maintenanceService = $maintenanceService;
     }
 
     public static function allowedSources(): array
@@ -88,7 +103,134 @@ final class ReservationService
             }
         }
 
-        return $this->repo->updateReservationStatus($reservationId, $newStatus, $deposit, $paymentMethod);
+        $ok = $this->repo->updateReservationStatus($reservationId, $newStatus, $deposit, $paymentMethod);
+        if (!$ok) {
+            return false;
+        }
+
+        if ($newStatus === 'Checked In') {
+            $this->autoSetRoomOccupiedOnCheckin($reservationId);
+        }
+
+        if ($newStatus === 'Cancelled' || $newStatus === 'No Show') {
+            $this->autoReleaseRoomOnCancelOrNoShow($reservationId, $currentStatus);
+        }
+
+        if ($newStatus === 'Completed') {
+            $this->autoCreateHousekeepingOnCheckout($reservationId);
+            $this->autoCreateMaintenanceOnCheckout($reservationId);
+        }
+
+        return true;
+    }
+
+    private function autoCreateHousekeepingOnCheckout(int $reservationId): void
+    {
+        if (!$this->housekeepingRepo || !$this->roomRepo) {
+            return;
+        }
+
+        $reservation = $this->repo->findReservationDetails($reservationId);
+        if (!$reservation) {
+            return;
+        }
+
+        $roomId = (int)($reservation['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return;
+        }
+
+        $createdBy = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+        $ref = (string)($reservation['reference_no'] ?? '');
+
+        $this->housekeepingRepo->createTask([
+            'room_id' => $roomId,
+            'task_type' => 'Cleaning',
+            'status' => 'Open',
+            'priority' => 'Normal',
+            'assigned_to' => null,
+            'created_by' => $createdBy,
+            'notes' => $ref !== '' ? ('Auto-created on checkout (' . $ref . ').') : 'Auto-created on checkout.',
+        ]);
+
+        $this->roomRepo->updateStatus($roomId, 'Cleaning');
+    }
+
+    private function autoSetRoomOccupiedOnCheckin(int $reservationId): void
+    {
+        if (!$this->roomRepo) {
+            return;
+        }
+
+        $reservation = $this->repo->findReservationDetails($reservationId);
+        if (!$reservation) {
+            return;
+        }
+
+        $roomId = (int)($reservation['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return;
+        }
+
+        $this->roomRepo->updateStatus($roomId, 'Occupied');
+    }
+
+    private function autoReleaseRoomOnCancelOrNoShow(int $reservationId, string $previousReservationStatus): void
+    {
+        if (!$this->roomRepo) {
+            return;
+        }
+
+        if (!in_array($previousReservationStatus, ['Pending', 'Confirmed', 'Upcoming'], true)) {
+            return;
+        }
+
+        $reservation = $this->repo->findReservationDetails($reservationId);
+        if (!$reservation) {
+            return;
+        }
+
+        $roomId = (int)($reservation['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return;
+        }
+
+        $this->roomRepo->updateStatus($roomId, 'Vacant');
+    }
+
+    private function autoCreateMaintenanceOnCheckout(int $reservationId): void
+    {
+        if (!$this->maintenanceService) {
+            return;
+        }
+
+        $reservation = $this->repo->findReservationDetails($reservationId);
+        if (!$reservation) {
+            return;
+        }
+
+        $roomId = (int)($reservation['room_id'] ?? 0);
+        if ($roomId <= 0) {
+            return;
+        }
+
+        $ref = (string)($reservation['reference_no'] ?? '');
+        $guestName = trim((string)($reservation['first_name'] ?? '') . ' ' . (string)($reservation['last_name'] ?? ''));
+
+        $errors = [];
+        $this->maintenanceService->createTicket([
+            'room_id' => $roomId,
+            'asset_id' => 0,
+            'category_id' => 0,
+            'priority' => 'Normal',
+            'title' => 'Post-checkout Inspection',
+            'description' => $ref !== ''
+                ? ('Auto-created on checkout for reservation ' . $ref . ($guestName !== '' ? (' (' . $guestName . ')') : '') . '.')
+                : 'Auto-created on checkout.',
+            'assigned_to' => 0,
+            'vendor_id' => 0,
+            'requires_downtime' => 0,
+        ], $errors);
     }
 
     private function allowedTransitions(string $currentStatus): array
