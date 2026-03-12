@@ -43,8 +43,11 @@ if ($checkin !== '' && $checkout !== '') {
 
 $rate = (float)($reservation['rate'] ?? 0);
 $subtotal = $nights * $rate;
+$discount = (float)($reservation['discount_amount'] ?? 0);
+$discount = max(0, min($subtotal, $discount));
+$subtotalAfterDiscount = max(0, $subtotal - $discount);
 $deposit = (float)($reservation['deposit_amount'] ?? 0);
-$balance = max(0, $subtotal - $deposit);
+$balance = max(0, $subtotalAfterDiscount - $deposit);
 
 $APP_BASE_URL = App::baseUrl();
 ?>
@@ -123,7 +126,13 @@ $APP_BASE_URL = App::baseUrl();
                     <div>
                         <div class="text-xs text-gray-500">Payment Summary</div>
                         <div class="text-lg font-semibold text-gray-900 mt-1">Balance: ₱<?= number_format($balance, 2) ?></div>
-                        <div class="text-xs text-gray-500 mt-1">Subtotal ₱<?= number_format($subtotal, 2) ?> • Deposit ₱<?= number_format($deposit, 2) ?></div>
+                        <div class="text-xs text-gray-500 mt-1">
+                            Subtotal ₱<?= number_format($subtotal, 2) ?>
+                            <?php if ($discount > 0): ?>
+                                • Discount ₱<?= number_format($discount, 2) ?>
+                            <?php endif; ?>
+                            • Deposit ₱<?= number_format($deposit, 2) ?>
+                        </div>
                     </div>
                     <div class="text-right">
                         <div class="text-xs text-gray-500">Nights</div>
@@ -171,6 +180,13 @@ $APP_BASE_URL = App::baseUrl();
                     <div class="text-xs text-gray-500 mb-2">Payment</div>
                     <div class="text-sm text-gray-700">Rate/Night: <span class="font-medium text-gray-900">₱<?= number_format($rate, 2) ?></span></div>
                     <div class="text-sm text-gray-700 mt-1">Subtotal: <span class="font-medium text-gray-900">₱<?= number_format($subtotal, 2) ?></span></div>
+                    <?php if (trim((string)($reservation['promo_code'] ?? '')) !== ''): ?>
+                        <div class="text-sm text-gray-700 mt-1">Promo: <span class="font-medium text-gray-900"><?= htmlspecialchars((string)$reservation['promo_code']) ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($discount > 0): ?>
+                        <div class="text-sm text-gray-700 mt-1">Discount: <span class="font-medium text-gray-900">- ₱<?= number_format($discount, 2) ?></span></div>
+                        <div class="text-sm text-gray-700 mt-1">Subtotal after discount: <span class="font-medium text-gray-900">₱<?= number_format($subtotalAfterDiscount, 2) ?></span></div>
+                    <?php endif; ?>
                     <div class="text-sm text-gray-700 mt-1">Deposit: <span class="font-medium text-gray-900">₱<?= number_format($deposit, 2) ?></span></div>
                     <div class="text-sm text-gray-700 mt-1">Balance: <span class="font-medium text-gray-900">₱<?= number_format($balance, 2) ?></span></div>
                     <div class="text-sm text-gray-700 mt-1">Method: <span class="font-medium text-gray-900"><?= htmlspecialchars($reservation['payment_method'] ?? '') ?></span></div>

@@ -86,6 +86,20 @@ CREATE TABLE IF NOT EXISTS room_lock_logs (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS promo_codes (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(30) NOT NULL UNIQUE,
+  discount_type ENUM('Percent','Fixed') NOT NULL DEFAULT 'Percent',
+  discount_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  start_date DATE NULL,
+  end_date DATE NULL,
+  max_uses INT UNSIGNED NULL,
+  used_count INT UNSIGNED NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS reservations (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   reference_no VARCHAR(30) NOT NULL UNIQUE,
@@ -94,6 +108,9 @@ CREATE TABLE IF NOT EXISTS reservations (
   status ENUM('Pending','Confirmed','Upcoming','Checked In','Completed','Cancelled','No Show') NOT NULL DEFAULT 'Pending',
   checkin_date DATE NOT NULL,
   checkout_date DATE NOT NULL,
+  promo_code_id INT UNSIGNED NULL,
+  promo_code VARCHAR(30) NULL,
+  discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   deposit_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   payment_method ENUM('Cash','Card','GCash','Bank Transfer') NULL,
   notes TEXT NULL,
@@ -101,7 +118,10 @@ CREATE TABLE IF NOT EXISTS reservations (
   updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_reservations_guest
     FOREIGN KEY (guest_id) REFERENCES guests(id)
-    ON UPDATE CASCADE ON DELETE RESTRICT
+    ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT fk_reservations_promo
+    FOREIGN KEY (promo_code_id) REFERENCES promo_codes(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS reservation_rooms (
@@ -384,5 +404,41 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
     ON UPDATE CASCADE ON DELETE CASCADE,
   CONSTRAINT fk_inv_move_user
     FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS function_rooms (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(80) NOT NULL UNIQUE,
+  capacity INT UNSIGNED NOT NULL DEFAULT 0,
+  base_rate DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  image_path VARCHAR(255) NULL,
+  status ENUM('Available','Maintenance') NOT NULL DEFAULT 'Available',
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS events (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  event_no VARCHAR(30) NOT NULL UNIQUE,
+  title VARCHAR(120) NOT NULL,
+  image_path VARCHAR(255) NULL,
+  client_name VARCHAR(120) NOT NULL,
+  client_phone VARCHAR(40) NULL,
+  client_email VARCHAR(120) NULL,
+  event_date DATE NOT NULL,
+  start_time TIME NULL,
+  end_time TIME NULL,
+  expected_guests INT UNSIGNED NOT NULL DEFAULT 0,
+  function_room_id INT UNSIGNED NULL,
+  status ENUM('Inquiry','Quoted','Confirmed','Ongoing','Completed','Cancelled') NOT NULL DEFAULT 'Inquiry',
+  estimated_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  deposit_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_events_function_room
+    FOREIGN KEY (function_room_id) REFERENCES function_rooms(id)
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;

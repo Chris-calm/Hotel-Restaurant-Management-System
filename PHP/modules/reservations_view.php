@@ -67,7 +67,10 @@ if ($checkin !== '' && $checkout !== '') {
 $rate = (float)($reservation['rate'] ?? 0);
 $subtotal = $nights * $rate;
 $deposit = (float)($reservation['deposit_amount'] ?? 0);
-$balance = max(0, $subtotal - $deposit);
+$discount = (float)($reservation['discount_amount'] ?? 0);
+$discount = max(0, min($subtotal, $discount));
+$subtotalAfterDiscount = max(0, $subtotal - $discount);
+$balance = max(0, $subtotalAfterDiscount - $deposit);
 
 include __DIR__ . '/../partials/page_start.php';
 include __DIR__ . '/../partials/sidebar.php';
@@ -169,6 +172,16 @@ include __DIR__ . '/../partials/sidebar.php';
                             <div class="text-xs text-gray-500">Subtotal</div>
                             <div class="text-sm font-medium text-gray-900 mt-1">₱<?= number_format($subtotal, 2) ?></div>
                         </div>
+                        <?php if (trim((string)($reservation['promo_code'] ?? '')) !== '' || $discount > 0): ?>
+                            <div class="rounded-lg border border-gray-100 bg-white p-3">
+                                <div class="text-xs text-gray-500">Promo</div>
+                                <div class="text-sm font-medium text-gray-900 mt-1"><?= htmlspecialchars(trim((string)($reservation['promo_code'] ?? ''))) !== '' ? htmlspecialchars((string)$reservation['promo_code']) : '-' ?></div>
+                            </div>
+                            <div class="rounded-lg border border-gray-100 bg-white p-3">
+                                <div class="text-xs text-gray-500">Discount</div>
+                                <div class="text-sm font-medium text-gray-900 mt-1">₱<?= number_format($discount, 2) ?></div>
+                            </div>
+                        <?php endif; ?>
                         <div class="rounded-lg border border-gray-100 bg-white p-3">
                             <div class="text-xs text-gray-500">Deposit</div>
                             <div class="text-sm font-medium text-gray-900 mt-1">₱<?= number_format($deposit, 2) ?></div>

@@ -98,6 +98,7 @@ $data = [
     'rate' => '',
     'adults' => 1,
     'children' => 0,
+    'promo_code' => '',
     'deposit_amount' => '',
     'payment_method' => 'Cash',
     'notes' => '',
@@ -112,6 +113,7 @@ if (Request::isPost()) {
     $data['rate'] = (string)Request::post('rate', '');
     $data['adults'] = (int)Request::post('adults', 1);
     $data['children'] = (int)Request::post('children', 0);
+    $data['promo_code'] = (string)Request::post('promo_code', '');
     $data['deposit_amount'] = (string)Request::post('deposit_amount', '');
     $data['payment_method'] = (string)Request::post('payment_method', 'Cash');
     $data['notes'] = (string)Request::post('notes', '');
@@ -125,6 +127,7 @@ if (Request::isPost()) {
         'rate' => is_numeric($data['rate']) ? (float)$data['rate'] : null,
         'adults' => $data['adults'],
         'children' => $data['children'],
+        'promo_code' => $data['promo_code'],
         'deposit_amount' => is_numeric($data['deposit_amount']) ? (float)$data['deposit_amount'] : 0,
         'payment_method' => $data['payment_method'],
         'notes' => $data['notes'],
@@ -426,6 +429,14 @@ include __DIR__ . '/../partials/sidebar.php';
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Children</label>
                         <input name="children" type="number" min="0" value="<?= (int)$data['children'] ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Promo Code (optional)</label>
+                        <input name="promo_code" value="<?= htmlspecialchars((string)$data['promo_code']) ?>" placeholder="e.g., SUMMER10" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <?php if (isset($errors['promo_code'])): ?>
+                            <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['promo_code']) ?></div>
+                        <?php endif; ?>
                     </div>
 
                     <div class="md:col-span-2">

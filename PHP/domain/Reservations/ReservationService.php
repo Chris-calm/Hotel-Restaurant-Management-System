@@ -52,6 +52,81 @@ final class ReservationService
         return $this->repo->listReservations($filters);
     }
 
+    public function listPromoCodes(): array
+    {
+        return $this->repo->listPromoCodes();
+    }
+
+    public function createPromoCode(array $data, array &$errors): int
+    {
+        $errors = [];
+
+        $code = strtoupper(trim((string)($data['code'] ?? '')));
+        if ($code === '' || !preg_match('/^[A-Z0-9_-]{3,30}$/', $code)) {
+            $errors['code'] = 'Promo code must be 3-30 chars (A-Z, 0-9, _ or -).';
+        }
+
+        $type = (string)($data['discount_type'] ?? 'Percent');
+        if (!Validator::inArray($type, ['Percent', 'Fixed'])) {
+            $errors['discount_type'] = 'Discount type is invalid.';
+        }
+
+        $valRaw = (string)($data['discount_value'] ?? '');
+        if (!is_numeric($valRaw)) {
+            $errors['discount_value'] = 'Discount value must be a number.';
+        } else {
+            $val = (float)$valRaw;
+            if ($val <= 0) {
+                $errors['discount_value'] = 'Discount value must be greater than 0.';
+            }
+            if ($type === 'Percent' && $val > 90) {
+                $errors['discount_value'] = 'Percent discount is too high.';
+            }
+        }
+
+        $start = trim((string)($data['start_date'] ?? ''));
+        $end = trim((string)($data['end_date'] ?? ''));
+        if ($start !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $start)) {
+            $errors['start_date'] = 'Start date is invalid.';
+        }
+        if ($end !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) {
+            $errors['end_date'] = 'End date is invalid.';
+        }
+        if ($start !== '' && $end !== '' && strtotime($end) < strtotime($start)) {
+            $errors['end_date'] = 'End date must be after start date.';
+        }
+
+        $maxUsesRaw = trim((string)($data['max_uses'] ?? ''));
+        if ($maxUsesRaw !== '' && !ctype_digit($maxUsesRaw)) {
+            $errors['max_uses'] = 'Max uses must be a whole number.';
+        }
+
+        if (!empty($errors)) {
+            return 0;
+        }
+
+        return $this->repo->createPromoCode([
+            'code' => $code,
+            'discount_type' => $type,
+            'discount_value' => (float)$valRaw,
+            'start_date' => $start,
+            'end_date' => $end,
+            'max_uses' => $maxUsesRaw !== '' ? (int)$maxUsesRaw : 0,
+            'is_active' => (int)($data['is_active'] ?? 1),
+            'notes' => (string)($data['notes'] ?? ''),
+        ]);
+    }
+
+    public function setPromoCodeActive(int $promoId, bool $active, array &$errors): bool
+    {
+        $errors = [];
+        if ($promoId <= 0) {
+            $errors['promo_id'] = 'Invalid promo id.';
+            return false;
+        }
+        return $this->repo->setPromoCodeActive($promoId, $active);
+    }
+
     public function findAvailableRooms(string $checkinDate, string $checkoutDate, int $roomTypeId = 0): array
     {
         return $this->repo->findAvailableRooms($checkinDate, $checkoutDate, $roomTypeId);
@@ -313,6 +388,42 @@ final class ReservationService
             return 0;
         }
 
+        $rate = (float)($selectedRoom['base_rate'] ?? 0);
+        if (isset($data['rate']) && is_numeric($data['rate'])) {
+            $rate = (float)$data['rate'];
+        }
+
+        $nights = 0;
+        $n1 = strtotime($checkin);
+        $n2 = strtotime($checkout);
+        if ($n1 !== false && $n2 !== false && $n2 > $n1) {
+            $nights = (int)round(($n2 - $n1) / 86400);
+        }
+        $staySubtotal = $nights * $rate;
+
+        $promoCodeInput = strtoupper(trim((string)($data['promo_code'] ?? '')));
+        $promoId = 0;
+        $promoCodeUsed = '';
+        $discountAmount = 0.0;
+        if ($promoCodeInput !== '') {
+            $promo = $this->repo->findActivePromoByCode($promoCodeInput, $checkin);
+            if (!$promo) {
+                $errors['promo_code'] = 'Promo code is invalid or inactive.';
+                return 0;
+            }
+
+            $promoId = (int)($promo['id'] ?? 0);
+            $promoCodeUsed = (string)($promo['code'] ?? $promoCodeInput);
+            $type = (string)($promo['discount_type'] ?? 'Percent');
+            $val = (float)($promo['discount_value'] ?? 0);
+            if ($type === 'Percent') {
+                $discountAmount = $staySubtotal * ($val / 100);
+            } else {
+                $discountAmount = $val;
+            }
+            $discountAmount = max(0.0, min($staySubtotal, $discountAmount));
+        }
+
         $reservationId = $this->repo->createReservation([
             'reference_no' => $this->generateReferenceNo(),
             'guest_id' => (int)$data['guest_id'],
@@ -320,6 +431,9 @@ final class ReservationService
             'status' => 'Confirmed',
             'checkin_date' => $checkin,
             'checkout_date' => $checkout,
+            'promo_code_id' => $promoId,
+            'promo_code' => $promoCodeUsed,
+            'discount_amount' => $discountAmount,
             'deposit_amount' => (float)$data['deposit_amount'],
             'payment_method' => (string)($data['payment_method'] ?? ''),
             'notes' => (string)($data['notes'] ?? ''),
@@ -330,10 +444,6 @@ final class ReservationService
             return 0;
         }
 
-        $rate = (float)($selectedRoom['base_rate'] ?? 0);
-        if (isset($data['rate']) && is_numeric($data['rate'])) {
-            $rate = (float)$data['rate'];
-        }
         $okAttach = $this->repo->attachRoomToReservation($reservationId, [
             'room_id' => $roomId,
             'room_type_id' => (int)($selectedRoom['room_type_id'] ?? 0),
@@ -345,6 +455,10 @@ final class ReservationService
         if (!$okAttach) {
             $errors['general'] = 'Reservation created but room assignment failed.';
             return 0;
+        }
+
+        if ($promoId > 0) {
+            $this->repo->incrementPromoUsedCount($promoId);
         }
 
         return $reservationId;
