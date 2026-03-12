@@ -186,25 +186,31 @@ include __DIR__ . '/../partials/sidebar.php';
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     <div class="rounded-xl border border-gray-100 p-4 lg:col-span-2">
                         <div class="text-xs text-gray-500 mb-2">Confirm (requires deposit)</div>
-                        <form method="post" class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <input type="hidden" name="action" value="Confirmed" />
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Deposit Amount</label>
-                                <input name="deposit_amount" value="<?= htmlspecialchars((string)$deposit) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <?php if ($status === 'Pending'): ?>
+                            <form method="post" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <input type="hidden" name="action" value="Confirmed" />
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Deposit Amount</label>
+                                    <input name="deposit_amount" value="<?= htmlspecialchars((string)$deposit) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                                    <select name="payment_method" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                                        <option value="">(keep current)</option>
+                                        <?php foreach (ReservationService::allowedPaymentMethods() as $pm): ?>
+                                            <option value="<?= htmlspecialchars($pm) ?>" <?= ($reservation['payment_method'] ?? '') === $pm ? 'selected' : '' ?>><?= htmlspecialchars($pm) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="md:col-span-2">
+                                    <button class="w-full px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 transition">Confirm Reservation</button>
+                                </div>
+                            </form>
+                        <?php else: ?>
+                            <div class="text-sm text-gray-600">
+                                This reservation is already <span class="font-medium text-gray-900"><?= htmlspecialchars($status) ?></span>. Confirmation is only available when the status is <span class="font-medium text-gray-900">Pending</span>.
                             </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-                                <select name="payment_method" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
-                                    <option value="">(keep current)</option>
-                                    <?php foreach (ReservationService::allowedPaymentMethods() as $pm): ?>
-                                        <option value="<?= htmlspecialchars($pm) ?>" <?= ($reservation['payment_method'] ?? '') === $pm ? 'selected' : '' ?>><?= htmlspecialchars($pm) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="md:col-span-2">
-                                <button class="w-full px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 transition">Confirm Reservation</button>
-                            </div>
-                        </form>
+                        <?php endif; ?>
                     </div>
 
                     <div class="rounded-xl border border-gray-100 p-4">

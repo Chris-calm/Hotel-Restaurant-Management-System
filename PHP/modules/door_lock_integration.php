@@ -4,6 +4,9 @@ RBACMiddleware::checkPageAccess();
 
 require_once __DIR__ . '/../core/bootstrap.php';
 
+Response::redirect('rooms/locks.php');
+exit;
+
 $conn = Database::getConnection();
 
 $pendingApprovals = [];

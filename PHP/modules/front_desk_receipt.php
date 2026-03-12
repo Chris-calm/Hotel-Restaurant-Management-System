@@ -55,12 +55,18 @@ $APP_BASE_URL = App::baseUrl();
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title><?= htmlspecialchars($pageTitle) ?></title>
     <link rel="stylesheet" href="<?= htmlspecialchars($APP_BASE_URL) ?>/CSS/index.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @media print {
             #sidebar, nav, .no-print { display: none !important; }
             #content { margin-left: 0 !important; }
             main { padding: 0 !important; }
             .print-card { border: none !important; box-shadow: none !important; }
+            body { background: #fff !important; }
+        }
+
+        @media screen {
+            body { background: #eeeeee; }
         }
     </style>
 </head>
@@ -80,8 +86,22 @@ $APP_BASE_URL = App::baseUrl();
             </div>
         </div>
 
-        <div class="bg-white rounded-lg border border-gray-100 p-6 print-card">
-            <div class="flex items-center justify-between gap-4 mb-4">
+        <?php
+            $status = (string)($reservation['status'] ?? '');
+            $statusBadge = 'border-gray-200 bg-gray-50 text-gray-700';
+            if ($status === 'Confirmed') {
+                $statusBadge = 'border-green-200 bg-green-50 text-green-700';
+            } elseif ($status === 'Pending') {
+                $statusBadge = 'border-yellow-200 bg-yellow-50 text-yellow-800';
+            } elseif ($status === 'Cancelled' || $status === 'No Show') {
+                $statusBadge = 'border-red-200 bg-red-50 text-red-700';
+            } elseif ($status === 'Checked In') {
+                $statusBadge = 'border-blue-200 bg-blue-50 text-blue-700';
+            }
+        ?>
+
+        <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-gray-100 p-6 md:p-8 print-card">
+            <div class="flex items-start justify-between gap-4 mb-6">
                 <div class="flex items-center gap-3">
                     <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PICTURES/hms-logo.svg" alt="Logo" style="width:42px;height:42px;" />
                     <div>
@@ -92,7 +112,24 @@ $APP_BASE_URL = App::baseUrl();
                 <div class="text-right">
                     <div class="text-xs text-gray-500">Reference No</div>
                     <div class="text-lg font-semibold text-gray-900"><?= htmlspecialchars($reservation['reference_no'] ?? '') ?></div>
-                    <div class="text-xs text-gray-500 mt-1">Status: <?= htmlspecialchars($reservation['status'] ?? '') ?></div>
+                    <div class="mt-2">
+                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs border <?= htmlspecialchars($statusBadge) ?>"><?= htmlspecialchars($status) ?></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="rounded-xl border border-gray-100 bg-gray-50 p-4 mb-4">
+                <div class="flex items-start justify-between gap-4">
+                    <div>
+                        <div class="text-xs text-gray-500">Payment Summary</div>
+                        <div class="text-lg font-semibold text-gray-900 mt-1">Balance: ₱<?= number_format($balance, 2) ?></div>
+                        <div class="text-xs text-gray-500 mt-1">Subtotal ₱<?= number_format($subtotal, 2) ?> • Deposit ₱<?= number_format($deposit, 2) ?></div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xs text-gray-500">Nights</div>
+                        <div class="text-lg font-semibold text-gray-900 mt-1"><?= (int)$nights ?></div>
+                        <div class="text-xs text-gray-500 mt-1">Rate ₱<?= number_format($rate, 2) ?>/night</div>
+                    </div>
                 </div>
             </div>
 
@@ -147,8 +184,25 @@ $APP_BASE_URL = App::baseUrl();
                 </div>
             <?php endif; ?>
 
-            <div class="mt-6 text-xs text-gray-500">
-                Generated: <?= htmlspecialchars($reservation['created_at'] ?? '') ?>
+            <div class="mt-6 pt-4 border-t border-gray-100">
+                <div class="flex items-start justify-between gap-4">
+                    <div class="text-xs text-gray-500">
+                        Generated: <?= htmlspecialchars($reservation['created_at'] ?? '') ?>
+                    </div>
+                    <div class="text-xs text-gray-500 text-right">
+                        Thank you
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                        <div class="text-xs text-gray-500">Guest Signature</div>
+                        <div class="mt-2 border-b border-gray-200" style="height:24px;"></div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500">Staff Signature</div>
+                        <div class="mt-2 border-b border-gray-200" style="height:24px;"></div>
+                    </div>
+                </div>
             </div>
         </div>
     </main>

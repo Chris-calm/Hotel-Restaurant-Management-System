@@ -51,7 +51,7 @@ $currentUserRole = $_SESSION['role'] ?? 'staff';
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/rooms/index.php"><span class="text">Rooms & Room Types</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/housekeeping_maintenance.php"><span class="text">Housekeeping & Maintenance</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/guests/index.php"><span class="text">Guests (CRM)</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/door_lock_integration.php"><span class="text">Door Lock Integration</span></a></li>
+                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/rooms/locks.php"><span class="text">Door Lock Integration</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/channel_management.php"><span class="text">Channel Management</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/marketing_promotions.php"><span class="text">Marketing & Promotions</span></a></li>
                 <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/analytics_reporting.php"><span class="text">Analytics & Reporting</span></a></li>

@@ -415,29 +415,31 @@ include __DIR__ . '/../partials/sidebar.php';
             });
         </script>
         <?php else: ?>
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-2">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-12">
                 <div class="flex items-center justify-between gap-4 mb-4">
                     <h3 class="text-lg font-medium text-gray-900">Maintenance Tickets</h3>
                     <div class="text-xs text-gray-500">Open → Closed workflow</div>
                 </div>
 
-                <form method="get" class="mb-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+                <form method="get" class="mb-4 grid grid-cols-1 md:grid-cols-12 gap-3">
                     <input type="hidden" name="tab" value="maintenance" />
-                    <input name="ticket_q" value="<?= htmlspecialchars($ticketQ) ?>" placeholder="Search ticket/room/asset" class="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                    <select name="ticket_status" class="border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                    <input name="ticket_q" value="<?= htmlspecialchars($ticketQ) ?>" placeholder="Search ticket/room/asset" class="border border-gray-200 rounded-lg px-3 py-2 text-sm md:col-span-5" />
+                    <select name="ticket_status" class="border border-gray-200 rounded-lg px-3 py-2 text-sm md:col-span-3">
                         <option value="">All Status</option>
                         <?php foreach (MaintenanceService::allowedStatuses() as $s): ?>
                             <option value="<?= htmlspecialchars($s) ?>" <?= $s === $ticketStatus ? 'selected' : '' ?>><?= htmlspecialchars($s) ?></option>
                         <?php endforeach; ?>
                     </select>
-                    <select name="ticket_priority" class="border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                    <select name="ticket_priority" class="border border-gray-200 rounded-lg px-3 py-2 text-sm md:col-span-3">
                         <option value="">All Priority</option>
                         <?php foreach (MaintenanceService::allowedPriorities() as $p): ?>
                             <option value="<?= htmlspecialchars($p) ?>" <?= $p === $ticketPriority ? 'selected' : '' ?>><?= htmlspecialchars($p) ?></option>
                         <?php endforeach; ?>
                     </select>
-                    <button class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Filter</button>
+                    <div class="flex items-center gap-2 md:col-span-1">
+                        <button class="w-full px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black transition">Filter</button>
+                    </div>
                 </form>
 
                 <div class="space-y-3">
@@ -469,9 +471,9 @@ include __DIR__ . '/../partials/sidebar.php';
                                 $img = (string)$t['room_type_image_path'];
                             }
                         ?>
-                        <div class="rounded-xl border border-gray-100 overflow-hidden bg-white">
+                        <div class="rounded-2xl border border-gray-100 overflow-hidden bg-white">
                             <div class="flex items-stretch">
-                                <div class="w-28 bg-gray-50 flex items-center justify-center">
+                                <div class="w-28 lg:w-36 bg-gray-50 flex items-center justify-center">
                                     <?php if ($img !== ''): ?>
                                         <img src="<?= htmlspecialchars($APP_BASE_URL . $img) ?>" alt="" style="height:100%;width:100%;object-fit:cover;" />
                                     <?php else: ?>
@@ -479,68 +481,71 @@ include __DIR__ . '/../partials/sidebar.php';
                                     <?php endif; ?>
                                 </div>
                                 <div class="flex-1 p-4">
-                            <div class="flex items-start justify-between gap-4">
-                                <div>
-                                    <div class="text-sm font-medium text-gray-900">
-                                        <?= htmlspecialchars(($t['ticket_no'] ?? '') . ' • ' . ($t['title'] ?? '')) ?>
-                                    </div>
-                                    <div class="flex items-center gap-2 mt-2 flex-wrap">
-                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>"><?= htmlspecialchars($tStatus) ?></span>
-                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-200 bg-white text-gray-700"><?= htmlspecialchars($tPriority) ?></span>
-                                        <?php if (trim((string)($t['category_name'] ?? '')) !== ''): ?>
-                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-200 bg-gray-50 text-gray-700"><?= htmlspecialchars((string)$t['category_name']) ?></span>
-                                        <?php endif; ?>
-                                        <?php if ((int)($t['requires_downtime'] ?? 0) === 1): ?>
-                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-red-200 bg-red-50 text-red-700">Downtime</span>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div class="text-xs text-gray-600 mt-1">
-                                        <?php if (trim((string)($t['room_no'] ?? '')) !== ''): ?>
-                                            <?= htmlspecialchars('Room ' . ($t['room_no'] ?? '')) ?>
-                                        <?php endif; ?>
-                                        <?php if (trim((string)($t['asset_code'] ?? '')) !== ''): ?>
-                                            <?= htmlspecialchars(' • Asset ' . ($t['asset_code'] ?? '')) ?>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div class="text-xs text-gray-500 mt-1">
-                                        <?= htmlspecialchars('Assigned: ' . (($t['assigned_username'] ?? '') !== '' ? $t['assigned_username'] : '-')) ?>
-                                        <?= htmlspecialchars(' • Vendor: ' . (($t['vendor_name'] ?? '') !== '' ? $t['vendor_name'] : '-')) ?>
-                                    </div>
-                                </div>
+                                    <div class="flex items-start justify-between gap-4 flex-wrap">
+                                        <div class="min-w-[240px]">
+                                            <div class="text-sm font-medium text-gray-900">
+                                                <?= htmlspecialchars(($t['ticket_no'] ?? '') . ' • ' . ($t['title'] ?? '')) ?>
+                                            </div>
+                                            <div class="flex items-center gap-2 mt-2 flex-wrap">
+                                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>"><?= htmlspecialchars($tStatus) ?></span>
+                                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-200 bg-white text-gray-700"><?= htmlspecialchars($tPriority) ?></span>
+                                                <?php if (trim((string)($t['category_name'] ?? '')) !== ''): ?>
+                                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-200 bg-gray-50 text-gray-700"><?= htmlspecialchars((string)$t['category_name']) ?></span>
+                                                <?php endif; ?>
+                                                <?php if ((int)($t['requires_downtime'] ?? 0) === 1): ?>
+                                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-red-200 bg-red-50 text-red-700">Downtime</span>
+                                                <?php endif; ?>
+                                            </div>
+                                            <div class="text-xs text-gray-600 mt-2">
+                                                <?php if (trim((string)($t['room_no'] ?? '')) !== ''): ?>
+                                                    <?= htmlspecialchars('Room ' . ($t['room_no'] ?? '')) ?>
+                                                <?php endif; ?>
+                                                <?php if (trim((string)($t['asset_code'] ?? '')) !== ''): ?>
+                                                    <?= htmlspecialchars(' • Asset ' . ($t['asset_code'] ?? '')) ?>
+                                                <?php endif; ?>
+                                            </div>
+                                            <div class="text-xs text-gray-500 mt-1">
+                                                <?= htmlspecialchars('Assigned: ' . (($t['assigned_username'] ?? '') !== '' ? $t['assigned_username'] : '-')) ?>
+                                                <?= htmlspecialchars(' • Vendor: ' . (($t['vendor_name'] ?? '') !== '' ? $t['vendor_name'] : '-')) ?>
+                                            </div>
+                                        </div>
 
-                                <div class="flex flex-col gap-2">
-                                    <form method="post" class="flex items-center gap-2">
-                                        <input type="hidden" name="action" value="maintenance_set_status" />
-                                        <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
-                                        <select name="status" class="border border-gray-200 rounded-lg px-2 py-1 text-xs">
-                                            <?php foreach (MaintenanceService::allowedStatuses() as $s): ?>
-                                                <option value="<?= htmlspecialchars($s) ?>" <?= $s === ($t['status'] ?? '') ? 'selected' : '' ?>><?= htmlspecialchars($s) ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                        <button class="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-700 transition">Update</button>
-                                    </form>
+                                        <div class="w-full md:w-auto flex flex-col gap-2">
+                                            <form method="post" class="flex items-center gap-2 justify-end">
+                                                <input type="hidden" name="action" value="maintenance_set_status" />
+                                                <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
+                                                <select name="status" class="border border-gray-200 rounded-lg px-2 py-1 text-xs">
+                                                    <?php foreach (MaintenanceService::allowedStatuses() as $s): ?>
+                                                        <option value="<?= htmlspecialchars($s) ?>" <?= $s === ($t['status'] ?? '') ? 'selected' : '' ?>><?= htmlspecialchars($s) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                                <button class="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-700 transition">Update</button>
+                                            </form>
 
-                                    <form method="post" class="flex items-center gap-2">
-                                        <input type="hidden" name="action" value="maintenance_update_assignment" />
-                                        <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
-                                        <select name="assigned_to" class="border border-gray-200 rounded-lg px-2 py-1 text-xs">
-                                            <option value="0">Assignee</option>
-                                            <?php foreach ($users as $u): ?>
-                                                <option value="<?= (int)$u['id'] ?>" <?= (int)($t['assigned_to'] ?? 0) === (int)$u['id'] ? 'selected' : '' ?>><?= htmlspecialchars($u['username']) ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                        <select name="vendor_id" class="border border-gray-200 rounded-lg px-2 py-1 text-xs">
-                                            <option value="0">Vendor</option>
-                                            <?php foreach ($vendors as $v): ?>
-                                                <option value="<?= (int)$v['id'] ?>" <?= (int)($t['vendor_id'] ?? 0) === (int)$v['id'] ? 'selected' : '' ?>><?= htmlspecialchars($v['name']) ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                        <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Save</button>
-                                    </form>
-                                </div>
-                            </div>
+                                            <form method="post" class="flex items-center gap-2 justify-end flex-wrap">
+                                                <input type="hidden" name="action" value="maintenance_update_assignment" />
+                                                <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
+                                                <select name="assigned_to" class="border border-gray-200 rounded-lg px-2 py-1 text-xs">
+                                                    <option value="0">Assignee</option>
+                                                    <?php foreach ($users as $u): ?>
+                                                        <option value="<?= (int)$u['id'] ?>" <?= (int)($t['assigned_to'] ?? 0) === (int)$u['id'] ? 'selected' : '' ?>><?= htmlspecialchars($u['username']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                                <select name="vendor_id" class="border border-gray-200 rounded-lg px-2 py-1 text-xs">
+                                                    <option value="0">Vendor</option>
+                                                    <?php foreach ($vendors as $v): ?>
+                                                        <option value="<?= (int)$v['id'] ?>" <?= (int)($t['vendor_id'] ?? 0) === (int)$v['id'] ? 'selected' : '' ?>><?= htmlspecialchars($v['name']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                                <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Save</button>
+                                            </form>
+                                            <?php if (empty($vendors)): ?>
+                                                <div class="text-xs text-gray-500 text-right">No vendors found (only vendors with <span class="font-medium">is_active = 1</span> appear).</div>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
 
-                            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <form method="post" class="flex items-center gap-2">
                                     <input type="hidden" name="action" value="maintenance_add_log" />
                                     <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
@@ -548,17 +553,17 @@ include __DIR__ . '/../partials/sidebar.php';
                                     <button class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Add</button>
                                 </form>
 
-                                <form method="post" class="grid grid-cols-5 gap-2">
+                                <form method="post" class="grid grid-cols-5 gap-2" data-maint-cost-form="1">
                                     <input type="hidden" name="action" value="maintenance_add_cost" />
                                     <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
-                                    <select name="cost_type" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1">
+                                    <select name="cost_type" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1 js-cost-type">
                                         <?php foreach (MaintenanceService::allowedCostTypes() as $ct): ?>
                                             <option value="<?= htmlspecialchars($ct) ?>"><?= htmlspecialchars($ct) ?></option>
                                         <?php endforeach; ?>
                                     </select>
                                     <input name="description" placeholder="Cost desc" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-2" />
                                     <input name="qty" value="1" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1" />
-                                    <input name="unit_cost" value="0" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1" />
+                                    <input name="unit_cost" value="0" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1 js-unit-cost" />
                                     <div class="col-span-5 flex items-center justify-end">
                                         <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Add Cost</button>
                                     </div>
@@ -572,13 +577,13 @@ include __DIR__ . '/../partials/sidebar.php';
                 </div>
             </div>
 
-            <div class="bg-white rounded-lg border border-gray-100 p-6">
+            <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-12">
                 <div class="flex items-center justify-between gap-4 mb-4">
                     <h3 class="text-lg font-medium text-gray-900">Create Ticket</h3>
                     <div class="text-xs text-gray-500">Room or Asset</div>
                 </div>
 
-                <form method="post" class="space-y-4">
+                <form method="post" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <input type="hidden" name="action" value="create_maintenance_ticket" />
 
                     <div>
@@ -599,6 +604,9 @@ include __DIR__ . '/../partials/sidebar.php';
                                 <option value="<?= (int)$a['id'] ?>"><?= htmlspecialchars(($a['asset_code'] ?? '') . ' • ' . ($a['name'] ?? '') . (trim((string)($a['room_no'] ?? '')) !== '' ? ' • Room ' . $a['room_no'] : '')) ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if (empty($assets)): ?>
+                            <div class="text-xs text-gray-500 mt-2">No assets found. Add assets first to be able to select one here.</div>
+                        <?php endif; ?>
                     </div>
 
                     <div>
@@ -609,6 +617,9 @@ include __DIR__ . '/../partials/sidebar.php';
                                 <option value="<?= (int)$c['id'] ?>"><?= htmlspecialchars($c['name']) ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if (empty($categories)): ?>
+                            <div class="text-xs text-gray-500 mt-2">No categories found. Add at least 1 maintenance category to create tickets.</div>
+                        <?php endif; ?>
                     </div>
 
                     <div>
@@ -620,12 +631,12 @@ include __DIR__ . '/../partials/sidebar.php';
                         </select>
                     </div>
 
-                    <div>
+                    <div class="md:col-span-2 lg:col-span-3">
                         <label class="block text-sm font-medium text-gray-700 mb-1">Title</label>
                         <input name="title" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                     </div>
 
-                    <div>
+                    <div class="md:col-span-2 lg:col-span-3">
                         <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
                         <textarea name="description" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows="3"></textarea>
                     </div>
@@ -648,21 +659,64 @@ include __DIR__ . '/../partials/sidebar.php';
                                 <option value="<?= (int)$v['id'] ?>"><?= htmlspecialchars($v['name']) ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if (empty($vendors)): ?>
+                            <div class="text-xs text-gray-500 mt-2">No vendors found. Add vendors first to assign tickets to an external vendor.</div>
+                        <?php endif; ?>
                     </div>
 
-                    <div class="flex items-center gap-2">
+                    <div class="md:col-span-2 lg:col-span-3 flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                         <input type="hidden" name="requires_downtime" value="0" />
                         <input type="checkbox" name="requires_downtime" value="1" class="h-4 w-4" />
                         <label class="text-sm text-gray-700">Requires downtime (set room Out of Order)</label>
                     </div>
 
-                    <div class="flex items-center gap-2 pt-2">
+                    <div class="md:col-span-2 lg:col-span-3 flex items-center gap-2 pt-2">
                         <button class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 transition">Create Ticket</button>
                         <a href="housekeeping_maintenance.php?tab=maintenance" class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Reset</a>
                     </div>
                 </form>
             </div>
         </div>
+        <script>
+            (function () {
+                const SUGGESTED_UNIT_COST_PHP = {
+                    Labor: 500,
+                    Part: 300,
+                    Vendor: 1500,
+                    Other: 0
+                };
+
+                function parseNum(val) {
+                    const s = String(val ?? '').replace(/,/g, '').trim();
+                    const n = parseFloat(s);
+                    return isFinite(n) ? n : 0;
+                }
+
+                function applySuggestion(formEl) {
+                    if (!formEl) return;
+                    const typeEl = formEl.querySelector('.js-cost-type');
+                    const unitEl = formEl.querySelector('.js-unit-cost');
+                    if (!typeEl || !unitEl) return;
+
+                    const costType = String(typeEl.value || 'Other');
+                    const suggested = SUGGESTED_UNIT_COST_PHP[costType] ?? 0;
+                    const current = parseNum(unitEl.value);
+                    if (unitEl.value.trim() === '' || current === 0) {
+                        unitEl.value = String(suggested);
+                    }
+                }
+
+                document.querySelectorAll('form[data-maint-cost-form="1"]').forEach(function (formEl) {
+                    applySuggestion(formEl);
+                    const typeEl = formEl.querySelector('.js-cost-type');
+                    if (typeEl) {
+                        typeEl.addEventListener('change', function () {
+                            applySuggestion(formEl);
+                        });
+                    }
+                });
+            })();
+        </script>
         <?php endif; ?>
     </main>
 </section>

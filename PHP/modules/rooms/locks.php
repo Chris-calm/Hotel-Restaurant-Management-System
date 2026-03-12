@@ -65,6 +65,32 @@ $lockLogsReady = hasRoomLockLogsTable($conn);
 
 $flash = Flash::get();
 
+$today = date('Y-m-d');
+$unlockEligibleRoomIds = [];
+if ($conn) {
+    $statusSql = "('Confirmed','Upcoming','Checked In')";
+    $stmt = $conn->prepare(
+        "SELECT DISTINCT rr.room_id
+         FROM reservation_rooms rr
+         INNER JOIN reservations r ON r.id = rr.reservation_id
+         WHERE r.status IN {$statusSql}
+           AND r.checkin_date <= ?
+           AND r.checkout_date > ?"
+    );
+    if ($stmt instanceof mysqli_stmt) {
+        $stmt->bind_param('ss', $today, $today);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $rid = (int)($row['room_id'] ?? 0);
+            if ($rid > 0) {
+                $unlockEligibleRoomIds[$rid] = true;
+            }
+        }
+        $stmt->close();
+    }
+}
+
 if (Request::isPost() && (string)Request::post('action', '') === 'lock_action') {
     if (!$conn) {
         Flash::set('error', 'Database unavailable.');
@@ -198,6 +224,14 @@ if (Request::isPost() && (string)Request::post('action', '') === 'lock_action') 
 
 $rooms = $roomService->list('');
 
+$show = (string)Request::get('show', 'all');
+if ($show === 'eligible') {
+    $rooms = array_values(array_filter($rooms, function ($r) use ($unlockEligibleRoomIds) {
+        $rid = (int)($r['id'] ?? 0);
+        return $rid > 0 && isset($unlockEligibleRoomIds[$rid]);
+    }));
+}
+
 $pageTitle = 'Door Locks - Hotel Management System';
 $pendingApprovals = [];
 
@@ -214,6 +248,10 @@ include __DIR__ . '/../../partials/sidebar.php';
                     <p class="text-sm text-gray-500 mt-1">Localhost simulator. Unlock is only allowed if reception confirmed the booking (active reservation today).</p>
                 </div>
                 <div class="flex items-center gap-2">
+                    <div class="no-print flex items-center gap-2">
+                        <a href="locks.php" class="px-3 py-2 rounded-lg border text-sm <?= $show === 'all' ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 hover:bg-gray-50' ?>">All Rooms</a>
+                        <a href="locks.php?show=eligible" class="px-3 py-2 rounded-lg border text-sm <?= $show === 'eligible' ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 hover:bg-gray-50' ?>">Unlock Eligible Today</a>
+                    </div>
                     <a href="index.php" class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Back to Rooms</a>
                 </div>
             </div>
@@ -256,6 +294,9 @@ include __DIR__ . '/../../partials/sidebar.php';
                     } elseif ($lockStatus === 'Offline') {
                         $badgeClass = 'border-red-200 text-red-700';
                     }
+
+                    $isEligible = isset($unlockEligibleRoomIds[(int)($r['id'] ?? 0)]);
+                    $eligClass = $isEligible ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-700';
                 ?>
                 <div class="bg-white rounded-lg border border-gray-100 overflow-hidden">
                     <div class="h-36 bg-gray-50 flex items-center justify-center">
@@ -272,6 +313,13 @@ include __DIR__ . '/../../partials/sidebar.php';
                                 <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars($typeLabel) ?></div>
                             </div>
                             <div class="text-xs px-2 py-1 rounded-full border <?= htmlspecialchars($badgeClass) ?>"><?= htmlspecialchars($lockStatus) ?></div>
+                        </div>
+
+                        <div class="mt-3 flex items-center justify-between gap-3">
+                            <div class="text-xs text-gray-500">Unlock Access (Today)</div>
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($eligClass) ?>">
+                                <?= $isEligible ? 'Allowed' : 'Blocked' ?>
+                            </span>
                         </div>
 
                         <div class="mt-3 text-xs text-gray-500">Lock Provider: <?= htmlspecialchars($provider !== '' ? $provider : 'simulator') ?></div>
