@@ -181,6 +181,8 @@ final class ReservationService
                 $errors['deposit_amount'] = 'Deposit is required to confirm the reservation.';
                 return false;
             }
+
+            $this->applyLoyaltyTierDiscountOnConfirm($current);
         }
 
         $ok = $this->repo->updateReservationStatus($reservationId, $newStatus, $deposit, $paymentMethod);
@@ -198,9 +200,124 @@ final class ReservationService
 
         if ($newStatus === 'Completed') {
             $this->autoCreateHousekeepingOnCheckout($reservationId);
+            $this->awardLoyaltyPointsOnCompletion($current);
         }
 
         return true;
+    }
+
+    private function applyLoyaltyTierDiscountOnConfirm(array $reservation): void
+    {
+        $guestId = (int)($reservation['guest_id'] ?? 0);
+        if ($guestId <= 0) {
+            return;
+        }
+
+        $promoCodeId = (int)($reservation['promo_code_id'] ?? 0);
+        $promoCode = trim((string)($reservation['promo_code'] ?? ''));
+        $existingDiscount = (float)($reservation['discount_amount'] ?? 0);
+        if ($promoCodeId > 0 || $promoCode !== '' || $existingDiscount > 0) {
+            return;
+        }
+
+        $loyalty = $this->repo->getGuestLoyalty($guestId);
+        if (!$loyalty) {
+            return;
+        }
+        $tier = trim((string)($loyalty['loyalty_tier'] ?? ''));
+
+        $pct = 0.0;
+        if ($tier === 'Silver') {
+            $pct = 0.05;
+        } elseif ($tier === 'Gold') {
+            $pct = 0.08;
+        } elseif ($tier === 'Platinum') {
+            $pct = 0.12;
+        }
+        if ($pct <= 0) {
+            return;
+        }
+
+        $checkin = (string)($reservation['checkin_date'] ?? '');
+        $checkout = (string)($reservation['checkout_date'] ?? '');
+        $rate = (float)($reservation['rate'] ?? 0);
+        if ($checkin === '' || $checkout === '' || $rate <= 0) {
+            return;
+        }
+
+        $nights = 0;
+        $n1 = strtotime($checkin);
+        $n2 = strtotime($checkout);
+        if ($n1 !== false && $n2 !== false && $n2 > $n1) {
+            $nights = (int)round(($n2 - $n1) / 86400);
+        }
+        if ($nights <= 0) {
+            return;
+        }
+
+        $subtotal = $nights * $rate;
+        $discountAmount = $subtotal * $pct;
+        if ($discountAmount <= 0) {
+            return;
+        }
+
+        $this->repo->updateReservationDiscountAmount((int)($reservation['id'] ?? 0), $discountAmount);
+    }
+
+    private function awardLoyaltyPointsOnCompletion(array $reservation): void
+    {
+        $guestId = (int)($reservation['guest_id'] ?? 0);
+        if ($guestId <= 0) {
+            return;
+        }
+
+        $checkin = (string)($reservation['checkin_date'] ?? '');
+        $checkout = (string)($reservation['checkout_date'] ?? '');
+        $rate = (float)($reservation['rate'] ?? 0);
+        if ($checkin === '' || $checkout === '' || $rate <= 0) {
+            return;
+        }
+
+        $nights = 0;
+        $n1 = strtotime($checkin);
+        $n2 = strtotime($checkout);
+        if ($n1 !== false && $n2 !== false && $n2 > $n1) {
+            $nights = (int)round(($n2 - $n1) / 86400);
+        }
+        if ($nights <= 0) {
+            return;
+        }
+
+        $subtotal = $nights * $rate;
+        $discount = (float)($reservation['discount_amount'] ?? 0);
+        $net = max(0.0, $subtotal - max(0.0, $discount));
+        $earned = (int)floor($net / 100);
+        if ($earned <= 0) {
+            return;
+        }
+
+        $current = $this->repo->getGuestLoyalty($guestId);
+        $existingPoints = $current && is_numeric((string)($current['loyalty_points'] ?? ''))
+            ? (int)$current['loyalty_points']
+            : 0;
+
+        $newPoints = $existingPoints + $earned;
+        $tier = $this->loyaltyTierForPoints($newPoints);
+        $this->repo->updateGuestLoyalty($guestId, $newPoints, $tier);
+    }
+
+    private function loyaltyTierForPoints(int $points): ?string
+    {
+        if ($points >= 3000) {
+            return 'Platinum';
+        }
+        if ($points >= 1500) {
+            return 'Gold';
+        }
+        if ($points >= 500) {
+            return 'Silver';
+        }
+        return null;
     }
 
     private function autoCreateHousekeepingOnCheckout(int $reservationId): void

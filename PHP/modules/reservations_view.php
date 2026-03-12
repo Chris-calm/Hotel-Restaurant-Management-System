@@ -232,22 +232,33 @@ include __DIR__ . '/../partials/sidebar.php';
                     <div class="rounded-xl border border-gray-100 p-4">
                         <div class="text-xs text-gray-500 mb-2">Status Updates</div>
                         <div class="grid grid-cols-1 gap-2">
-                            <form method="post">
-                                <input type="hidden" name="action" value="Checked In" />
-                                <button class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Mark as Checked In</button>
-                            </form>
-                            <form method="post">
-                                <input type="hidden" name="action" value="Completed" />
-                                <button class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Mark as Completed (Check-out)</button>
-                            </form>
-                            <form method="post">
-                                <input type="hidden" name="action" value="No Show" />
-                                <button class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Mark as No Show</button>
-                            </form>
-                            <form method="post">
-                                <input type="hidden" name="action" value="Cancelled" />
-                                <button class="w-full px-4 py-2 rounded-lg border border-red-200 text-red-700 text-sm hover:bg-red-50 transition">Cancel Reservation</button>
-                            </form>
+                            <?php if ($status === 'Confirmed' || $status === 'Upcoming'): ?>
+                                <form method="post">
+                                    <input type="hidden" name="action" value="Checked In" />
+                                    <button class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Mark as Checked In</button>
+                                </form>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'Checked In'): ?>
+                                <form method="post">
+                                    <input type="hidden" name="action" value="Completed" />
+                                    <button class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Mark as Completed (Check-out)</button>
+                                </form>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'Confirmed' || $status === 'Upcoming'): ?>
+                                <form method="post">
+                                    <input type="hidden" name="action" value="No Show" />
+                                    <button class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Mark as No Show</button>
+                                </form>
+                            <?php endif; ?>
+
+                            <?php if ($status === 'Pending' || $status === 'Confirmed' || $status === 'Upcoming'): ?>
+                                <form method="post">
+                                    <input type="hidden" name="action" value="Cancelled" />
+                                    <button class="w-full px-4 py-2 rounded-lg border border-red-200 text-red-700 text-sm hover:bg-red-50 transition">Cancel Reservation</button>
+                                </form>
+                            <?php endif; ?>
                         </div>
                         <div class="text-xs text-gray-500 mt-2">Buttons will only work if the transition is allowed for the current status.</div>
                     </div>

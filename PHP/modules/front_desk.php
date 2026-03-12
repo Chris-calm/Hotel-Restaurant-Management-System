@@ -6,6 +6,7 @@ require_once __DIR__ . '/../core/bootstrap.php';
 require_once __DIR__ . '/../domain/Guests/GuestService.php';
 require_once __DIR__ . '/../domain/Rooms/RoomTypeService.php';
 require_once __DIR__ . '/../domain/Reservations/ReservationService.php';
+require_once __DIR__ . '/../domain/Notifications/NotificationRepository.php';
 
 $conn = Database::getConnection();
 
@@ -103,6 +104,10 @@ if (!$systemReservationsOnly || $prefillReservation) {
             if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
                 continue;
             }
+
+            if (!isset($r['room_image_path']) && isset($r['image_path'])) {
+                $r['room_image_path'] = $r['image_path'];
+            }
             $availableRooms[] = $r;
         }
     }
@@ -115,6 +120,10 @@ if ($lockRoomSelection && $prefillReservation) {
     $locked = $roomRepo->findById($roomId);
     if (!$locked) {
         $locked = (new ReservationRepository($conn))->findRoomById($roomId);
+    }
+
+    if (is_array($locked) && !isset($locked['room_image_path']) && isset($locked['image_path'])) {
+        $locked['room_image_path'] = $locked['image_path'];
     }
 
     if (!$locked && $roomId > 0) {
@@ -208,6 +217,31 @@ if (Request::isPost()) {
 
             $ok = $reservationService->updateStatus((int)$prefillReservation['id'], 'Confirmed', $payload, $errors);
             if ($ok) {
+                $guestUserId = 0;
+                try {
+                    $gid = (int)($prefillReservation['guest_id'] ?? 0);
+                    if ($gid > 0 && $conn) {
+                        $stmt = $conn->prepare("SELECT id FROM users WHERE guest_id = ? LIMIT 1");
+                        if ($stmt instanceof mysqli_stmt) {
+                            $stmt->bind_param('i', $gid);
+                            $stmt->execute();
+                            $row = $stmt->get_result()->fetch_assoc();
+                            $stmt->close();
+                            $guestUserId = (int)($row['id'] ?? 0);
+                        }
+                    }
+                } catch (Throwable $e) {
+                }
+
+                if ($guestUserId > 0) {
+                    $notifRepo = new NotificationRepository($conn);
+                    $ref = (string)($prefillReservation['reference_no'] ?? '');
+                    $title = 'Reservation confirmed';
+                    $msg = $ref !== '' ? ('Your reservation ' . $ref . ' has been confirmed.') : 'Your reservation has been confirmed.';
+                    $url = '/PHP/guest/reservations.php';
+                    $notifRepo->createForUser($guestUserId, $title, $msg, $url);
+                }
+
                 Flash::set('success', 'Reservation confirmed. Receipt generated.');
                 Response::redirect('front_desk_receipt.php?id=' . (int)$prefillReservation['id']);
             }

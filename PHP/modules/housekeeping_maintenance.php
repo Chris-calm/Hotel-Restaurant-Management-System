@@ -5,6 +5,7 @@ RBACMiddleware::checkPageAccess();
 require_once __DIR__ . '/../core/bootstrap.php';
 require_once __DIR__ . '/../domain/Housekeeping/HousekeepingService.php';
 require_once __DIR__ . '/../domain/Maintenance/MaintenanceService.php';
+require_once __DIR__ . '/../domain/Notifications/NotificationRepository.php';
 
 $conn = Database::getConnection();
 $housekeepingService = new HousekeepingService(
@@ -73,6 +74,28 @@ if (Request::isPost()) {
 
         $id = $housekeepingService->createCleaningTask($payload, $errors);
         if ($id > 0) {
+            try {
+                $notifRepo = new NotificationRepository($conn);
+                $rid = (int)($payload['room_id'] ?? 0);
+                $roomNo = '';
+                if ($rid > 0 && $conn) {
+                    $stmt = $conn->prepare("SELECT room_no FROM rooms WHERE id = ? LIMIT 1");
+                    if ($stmt instanceof mysqli_stmt) {
+                        $stmt->bind_param('i', $rid);
+                        $stmt->execute();
+                        $row = $stmt->get_result()->fetch_assoc();
+                        $stmt->close();
+                        $roomNo = (string)($row['room_no'] ?? '');
+                    }
+                }
+                $taskType = (string)($payload['task_type'] ?? 'Cleaning');
+                $title = 'Housekeeping task created';
+                $msg = ($roomNo !== '' ? ('Room ' . $roomNo . ' ') : '') . $taskType . ' task created.';
+                $url = '/PHP/modules/housekeeping_maintenance.php?tab=housekeeping';
+                $notifRepo->createForStaff($title, $msg, $url);
+            } catch (Throwable $e) {
+            }
+
             Flash::set('success', 'Housekeeping task created.');
             Response::redirect('housekeeping_maintenance.php?tab=housekeeping');
         }
@@ -83,6 +106,32 @@ if (Request::isPost()) {
         $status = (string)Request::post('status', '');
         $ok = $housekeepingService->setTaskStatus($taskId, $status, $errors);
         if ($ok) {
+            if ($status === 'Done') {
+                try {
+                    $notifRepo = new NotificationRepository($conn);
+                    $task = (new HousekeepingRepository($conn))->findTaskById($taskId);
+                    $roomNo = '';
+                    if ($task) {
+                        $rid = (int)($task['room_id'] ?? 0);
+                        if ($rid > 0) {
+                            $stmt = $conn->prepare("SELECT room_no FROM rooms WHERE id = ? LIMIT 1");
+                            if ($stmt instanceof mysqli_stmt) {
+                                $stmt->bind_param('i', $rid);
+                                $stmt->execute();
+                                $row = $stmt->get_result()->fetch_assoc();
+                                $stmt->close();
+                                $roomNo = (string)($row['room_no'] ?? '');
+                            }
+                        }
+                    }
+                    $title = 'Housekeeping completed';
+                    $msg = ($roomNo !== '' ? ('Room ' . $roomNo . ' ') : '') . 'housekeeping marked as Done.';
+                    $url = '/PHP/modules/housekeeping_maintenance.php?tab=housekeeping';
+                    $notifRepo->createForStaff($title, $msg, $url);
+                } catch (Throwable $e) {
+                }
+            }
+
             Flash::set('success', 'Task updated.');
             Response::redirect('housekeeping_maintenance.php?tab=housekeeping');
         }
@@ -101,8 +150,29 @@ if (Request::isPost()) {
             'requires_downtime' => (string)Request::post('requires_downtime', '') === '1',
         ];
 
-        $id = $maintenanceService->createTicket($payload, $errors);
-        if ($id > 0) {
+        $ticketId = $maintenanceService->createTicket($payload, $errors);
+        if ($ticketId > 0) {
+            try {
+                $notifRepo = new NotificationRepository($conn);
+                $rid = (int)($payload['room_id'] ?? 0);
+                $roomNo = '';
+                if ($rid > 0 && $conn) {
+                    $stmt = $conn->prepare("SELECT room_no FROM rooms WHERE id = ? LIMIT 1");
+                    if ($stmt instanceof mysqli_stmt) {
+                        $stmt->bind_param('i', $rid);
+                        $stmt->execute();
+                        $row = $stmt->get_result()->fetch_assoc();
+                        $stmt->close();
+                        $roomNo = (string)($row['room_no'] ?? '');
+                    }
+                }
+                $title = 'Maintenance ticket created';
+                $msg = ($roomNo !== '' ? ('Room ' . $roomNo . ' ') : '') . 'ticket created.';
+                $url = '/PHP/modules/housekeeping_maintenance.php?tab=maintenance';
+                $notifRepo->createForStaff($title, $msg, $url);
+            } catch (Throwable $e) {
+            }
+
             Flash::set('success', 'Maintenance ticket created.');
             Response::redirect('housekeeping_maintenance.php?tab=maintenance');
         }

@@ -5,10 +5,11 @@ require_once __DIR__ . '/../../core/Database.php';
 final class ReservationRepository
 {
     private ?mysqli $conn;
-    private ?bool $hasGuestIdentityColumns = null;
-    private ?bool $hasRoomTypeImageColumn = null;
     private ?bool $hasRoomImageColumn = null;
+    private ?bool $hasRoomTypeImageColumn = null;
+    private ?bool $hasGuestIdentityColumns = null;
     private ?bool $hasPromoColumns = null;
+    private ?bool $hasGuestLoyaltyColumns = null;
     private ?bool $hasPromoCodesTable = null;
 
     public function __construct(?mysqli $conn)
@@ -206,6 +207,41 @@ final class ReservationRepository
         $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
         $this->hasPromoColumns = ($count === 3);
         return $this->hasPromoColumns;
+    }
+
+    private function hasGuestLoyaltyColumns(): bool
+    {
+        if ($this->hasGuestLoyaltyColumns !== null) {
+            return $this->hasGuestLoyaltyColumns;
+        }
+        if (!$this->conn) {
+            $this->hasGuestLoyaltyColumns = false;
+            return false;
+        }
+
+        try {
+            $dbRow = $this->conn->query('SELECT DATABASE()');
+            $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+            $db = $this->conn->real_escape_string($db);
+            if ($db === '') {
+                $this->hasGuestLoyaltyColumns = false;
+                return false;
+            }
+
+            $res = $this->conn->query(
+                "SELECT COUNT(*)
+                 FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = '{$db}'
+                   AND TABLE_NAME = 'guests'
+                   AND COLUMN_NAME IN ('loyalty_points','loyalty_tier')"
+            );
+            $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+            $this->hasGuestLoyaltyColumns = ($count === 2);
+            return $this->hasGuestLoyaltyColumns;
+        } catch (Throwable $e) {
+            $this->hasGuestLoyaltyColumns = false;
+            return false;
+        }
     }
 
     private function hasPromoCodesTable(): bool
@@ -418,6 +454,64 @@ final class ReservationRepository
         $row = $res->fetch_assoc();
         $stmt->close();
         return $row ?: null;
+    }
+
+    public function getGuestLoyalty(int $guestId): ?array
+    {
+        if (!$this->conn || !$this->hasGuestLoyaltyColumns()) {
+            return null;
+        }
+
+        $stmt = $this->conn->prepare("SELECT loyalty_points, loyalty_tier FROM guests WHERE id = ? LIMIT 1");
+        if (!$stmt) {
+            return null;
+        }
+        $stmt->bind_param('i', $guestId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $row = $res->fetch_assoc();
+        $stmt->close();
+        return $row ?: null;
+    }
+
+    public function updateGuestLoyalty(int $guestId, int $loyaltyPoints, ?string $loyaltyTier): bool
+    {
+        if (!$this->conn || !$this->hasGuestLoyaltyColumns()) {
+            return false;
+        }
+
+        if ($loyaltyTier !== null && trim($loyaltyTier) === '') {
+            $loyaltyTier = null;
+        }
+
+        $stmt = $this->conn->prepare("UPDATE guests SET loyalty_points = ?, loyalty_tier = ? WHERE id = ?");
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('isi', $loyaltyPoints, $loyaltyTier, $guestId);
+        $ok = $stmt->execute();
+        $stmt->close();
+        return $ok;
+    }
+
+    public function updateReservationDiscountAmount(int $reservationId, float $discountAmount): bool
+    {
+        if (!$this->conn) {
+            return false;
+        }
+        if (!$this->hasPromoColumns()) {
+            return false;
+        }
+
+        $discountAmount = max(0.0, (float)$discountAmount);
+        $stmt = $this->conn->prepare("UPDATE reservations SET discount_amount = ? WHERE id = ?");
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('di', $discountAmount, $reservationId);
+        $ok = $stmt->execute();
+        $stmt->close();
+        return $ok;
     }
 
     public function findAvailableRooms(string $checkinDate, string $checkoutDate, int $roomTypeId = 0): array

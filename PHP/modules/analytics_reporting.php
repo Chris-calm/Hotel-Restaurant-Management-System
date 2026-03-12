@@ -94,6 +94,29 @@ $salesSeries = [0, 0, 0];
 
 $hasRealData = false;
 
+$dbName = '';
+$hasPosOrdersTable = false;
+$hasReservationDiscountColumn = false;
+
+if ($conn) {
+    try {
+        $dbRow = $conn->query('SELECT DATABASE()');
+        $dbName = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $dbName = $conn->real_escape_string($dbName);
+        if ($dbName !== '') {
+            $res = $conn->query("SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$dbName}' AND TABLE_NAME = 'pos_orders'");
+            $hasPosOrdersTable = $res ? ((int)($res->fetch_assoc()['c'] ?? 0) === 1) : false;
+
+            $res = $conn->query("SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$dbName}' AND TABLE_NAME = 'reservations' AND COLUMN_NAME = 'discount_amount'");
+            $hasReservationDiscountColumn = $res ? ((int)($res->fetch_assoc()['c'] ?? 0) === 1) : false;
+        }
+    } catch (Throwable $e) {
+        $dbName = '';
+        $hasPosOrdersTable = false;
+        $hasReservationDiscountColumn = false;
+    }
+}
+
 if ($conn) {
     try {
         $res = $conn->query("SELECT COUNT(*) AS c FROM rooms");
@@ -126,29 +149,41 @@ if ($conn) {
         }
 
         $res = $conn->query(
-            "SELECT COALESCE(SUM(r.discount_amount),0) AS discounts
-             FROM reservations r
-             WHERE r.status NOT IN ('Cancelled','No Show')
-               AND DATE_FORMAT(r.created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
+            $hasReservationDiscountColumn
+                ? "SELECT COALESCE(SUM(r.discount_amount),0) AS discounts
+                   FROM reservations r
+                   WHERE r.status NOT IN ('Cancelled','No Show')
+                     AND DATE_FORMAT(r.created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
+                : "SELECT 0 AS discounts"
         );
         $discountsMonth = $res ? (float)($res->fetch_assoc()['discounts'] ?? 0) : 0.0;
 
         $res = $conn->query(
-            "SELECT COALESCE(SUM((DATEDIFF(r.checkout_date, r.checkin_date) * rr.rate) - COALESCE(r.discount_amount,0)),0) AS revenue
-             FROM reservations r
-             INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
-             WHERE r.status NOT IN ('Cancelled','No Show')
-               AND DATE_FORMAT(r.created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
+            $hasReservationDiscountColumn
+                ? "SELECT COALESCE(SUM((DATEDIFF(r.checkout_date, r.checkin_date) * rr.rate) - COALESCE(r.discount_amount,0)),0) AS revenue
+                   FROM reservations r
+                   INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
+                   WHERE r.status NOT IN ('Cancelled','No Show')
+                     AND DATE_FORMAT(r.created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
+                : "SELECT COALESCE(SUM((DATEDIFF(r.checkout_date, r.checkin_date) * rr.rate)),0) AS revenue
+                   FROM reservations r
+                   INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
+                   WHERE r.status NOT IN ('Cancelled','No Show')
+                     AND DATE_FORMAT(r.created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
         );
         $roomRevenueMonth = $res ? (float)($res->fetch_assoc()['revenue'] ?? 0) : 0.0;
 
-        $res = $conn->query(
-            "SELECT COALESCE(SUM(total),0) AS revenue
-             FROM pos_orders
-             WHERE status = 'Paid'
-               AND DATE_FORMAT(created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
-        );
-        $posRevenueMonth = $res ? (float)($res->fetch_assoc()['revenue'] ?? 0) : 0.0;
+        if ($hasPosOrdersTable) {
+            $res = $conn->query(
+                "SELECT COALESCE(SUM(total),0) AS revenue
+                 FROM pos_orders
+                 WHERE status = 'Paid'
+                   AND DATE_FORMAT(created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
+            );
+            $posRevenueMonth = $res ? (float)($res->fetch_assoc()['revenue'] ?? 0) : 0.0;
+        } else {
+            $posRevenueMonth = 0.0;
+        }
 
         foreach ($days as $d) {
             $label = date('D', strtotime($d));
@@ -183,23 +218,9 @@ if ($conn) {
             (float)round($discountsMonth, 2)
         ];
 
-        $hasRealData = ($totalRooms + $todayReservations + $monthlyReservations) > 0 || ($roomRevenueMonth + $posRevenueMonth) > 0;
+        $hasRealData = true;
     } catch (Throwable $e) {
     }
-}
-
-if (!$hasRealData) {
-    $totalRooms = 48;
-    $todayOccupiedRooms = 31;
-    $todayOccupancyPct = 64.6;
-    $todayReservations = 9;
-    $monthlyReservations = 128;
-    $roomRevenueMonth = 152340.00;
-    $posRevenueMonth = 84250.00;
-    $discountsMonth = 11450.00;
-    $occupancyLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    $occupancySeries = [55, 61, 58, 66, 72, 75, 70];
-    $salesSeries = [$roomRevenueMonth, $posRevenueMonth, $discountsMonth];
 }
 
 include __DIR__ . '/../partials/page_start.php';
