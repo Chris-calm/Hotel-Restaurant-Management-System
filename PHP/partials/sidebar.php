@@ -52,38 +52,67 @@ if ($conn && $currentUserId > 0) {
         </div>
     </div>
 
-    <ul class="side-menu top">
-        <li <?= (basename($_SERVER['PHP_SELF']) === 'Dashboard.php') ? 'class="active"' : '' ?>>
-            <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/Dashboard.php">
-                <i class='bx bxs-dashboard'></i>
-                <span class="text">Dashboard</span>
-            </a>
-        </li>
+    <?php if ((string)$currentUserRole === 'guest'): ?>
+        <ul class="side-menu top">
+            <li <?= (strpos((string)($_SERVER['SCRIPT_NAME'] ?? ''), '/PHP/guest/index.php') !== false) ? 'class="active"' : '' ?>>
+                <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/guest/index.php">
+                    <i class='bx bxs-home'></i>
+                    <span class="text">Guest Home</span>
+                </a>
+            </li>
+            <li <?= (strpos((string)($_SERVER['SCRIPT_NAME'] ?? ''), '/PHP/guest/rooms.php') !== false) ? 'class="active"' : '' ?>>
+                <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/guest/rooms.php">
+                    <i class='bx bxs-bed'></i>
+                    <span class="text">Browse Rooms</span>
+                </a>
+            </li>
+            <li <?= (strpos((string)($_SERVER['SCRIPT_NAME'] ?? ''), '/PHP/guest/reservations.php') !== false) ? 'class="active"' : '' ?>>
+                <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/guest/reservations.php">
+                    <i class='bx bxs-calendar'></i>
+                    <span class="text">My Reservations</span>
+                </a>
+            </li>
+            <li <?= (basename($_SERVER['PHP_SELF']) === 'settings.php') ? 'class="active"' : '' ?>>
+                <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/settings.php">
+                    <i class='bx bxs-cog'></i>
+                    <span class="text">Settings</span>
+                </a>
+            </li>
+        </ul>
+    <?php else: ?>
+        <ul class="side-menu top">
+            <li <?= (basename($_SERVER['PHP_SELF']) === 'Dashboard.php') ? 'class="active"' : '' ?>>
+                <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/Dashboard.php">
+                    <i class='bx bxs-dashboard'></i>
+                    <span class="text">Dashboard</span>
+                </a>
+            </li>
 
-        <li class="dropdown">
-            <a href="#" class="dropdown-toggle">
-                <i class='bx bxs-hotel'></i>
-                <span class="text">Hotel Core Modules</span>
-                <i class='bx bx-chevron-down arrow'></i>
-            </a>
-            <ul class="dropdown-menu">
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/front_desk.php"><span class="text">Front Desk & Reception</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/reservations.php"><span class="text">Reservation & Booking</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/rooms/index.php"><span class="text">Rooms & Room Types</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/housekeeping_maintenance.php"><span class="text">Housekeeping & Maintenance</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/guests/index.php"><span class="text">Guests (CRM)</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/rooms/locks.php"><span class="text">Door Lock Integration</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/channel_management.php"><span class="text">Channel Management</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/marketing_promotions.php"><span class="text">Marketing & Promotions</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/analytics_reporting.php"><span class="text">Analytics & Reporting</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/events_conferences.php"><span class="text">Events & Conferences</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/billing_payments.php"><span class="text">Billing & Payments</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/pos.php"><span class="text">Point of Sale (POS)</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/inventory_stock.php"><span class="text">Inventory & Stock</span></a></li>
-                <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/loyalty_rewards.php"><span class="text">Loyalty & Rewards</span></a></li>
-            </ul>
-        </li>
-    </ul>
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">
+                    <i class='bx bxs-hotel'></i>
+                    <span class="text">Hotel Core Modules</span>
+                    <i class='bx bx-chevron-down arrow'></i>
+                </a>
+                <ul class="dropdown-menu">
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/front_desk.php"><span class="text">Front Desk & Reception</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/reservations.php"><span class="text">Reservation & Booking</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/rooms/index.php"><span class="text">Rooms & Room Types</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/housekeeping_maintenance.php"><span class="text">Housekeeping & Maintenance</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/guests/index.php"><span class="text">Guests (CRM)</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/rooms/locks.php"><span class="text">Door Lock Integration</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/channel_management.php"><span class="text">Channel Management</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/marketing_promotions.php"><span class="text">Marketing & Promotions</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/analytics_reporting.php"><span class="text">Analytics & Reporting</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/events_conferences.php"><span class="text">Events & Conferences</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/billing_payments.php"><span class="text">Billing & Payments</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/pos.php"><span class="text">Point of Sale (POS)</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/inventory_stock.php"><span class="text">Inventory & Stock</span></a></li>
+                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/loyalty_rewards.php"><span class="text">Loyalty & Rewards</span></a></li>
+                </ul>
+            </li>
+        </ul>
+    <?php endif; ?>
 
     <ul class="side-menu">
         <li>

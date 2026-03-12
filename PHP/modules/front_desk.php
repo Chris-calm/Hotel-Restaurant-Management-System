@@ -22,12 +22,34 @@ $reservationService = new ReservationService(
 
 $pendingApprovals = [];
 
+$reservationId = Request::int('get', 'reservation_id', 0);
+$prefillReservation = null;
+$lockRoomSelection = false;
+$systemReservationsOnly = true;
+
+if ($reservationId > 0) {
+    $prefillReservation = $reservationService->getReservationDetails($reservationId);
+    if ($prefillReservation && (string)($prefillReservation['status'] ?? '') === 'Pending' && (int)($prefillReservation['room_id'] ?? 0) > 0) {
+        $lockRoomSelection = true;
+    } else {
+        $prefillReservation = null;
+        $reservationId = 0;
+        $lockRoomSelection = false;
+    }
+}
+
 $filters = [
     'checkin_date' => (string)Request::get('checkin_date', ''),
     'checkout_date' => (string)Request::get('checkout_date', ''),
     'room_type_id' => (int)Request::get('room_type_id', 0),
     'guest_q' => (string)Request::get('guest_q', ''),
 ];
+
+if ($prefillReservation) {
+    $filters['checkin_date'] = (string)($prefillReservation['checkin_date'] ?? '');
+    $filters['checkout_date'] = (string)($prefillReservation['checkout_date'] ?? '');
+    $filters['room_type_id'] = 0;
+}
 
 $sanitizeDate = static function (string $v): string {
     $v = trim($v);
@@ -50,6 +72,11 @@ $filters['checkout_date'] = $sanitizeDate((string)$filters['checkout_date']);
 $guests = $reservationService->listGuests($filters['guest_q']);
 $roomTypes = $roomTypeService->list();
 
+$pendingOnlineReservations = [];
+if ($conn) {
+    $pendingOnlineReservations = $reservationService->listPendingOnlineReservations(50);
+}
+
 $availableRooms = [];
 $checkinValid = ($filters['checkin_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['checkin_date']) === 1);
 $checkoutValid = ($filters['checkout_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['checkout_date']) === 1);
@@ -60,22 +87,55 @@ if ($checkinValid && $checkoutValid) {
     $dateRangeValid = ($t1 !== false && $t2 !== false && $t2 > $t1);
 }
 
-if ($dateRangeValid) {
-    $availableRooms = $reservationService->findAvailableRooms(
-        $filters['checkin_date'],
-        $filters['checkout_date'],
-        $filters['room_type_id']
-    );
+if (!$systemReservationsOnly || $prefillReservation) {
+    if ($dateRangeValid) {
+        $availableRooms = $reservationService->findAvailableRooms(
+            $filters['checkin_date'],
+            $filters['checkout_date'],
+            $filters['room_type_id']
+        );
+    } else {
+        $rooms = $roomRepo->search('');
+        foreach ($rooms as $r) {
+            if ((string)($r['status'] ?? '') !== 'Vacant') {
+                continue;
+            }
+            if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
+                continue;
+            }
+            $availableRooms[] = $r;
+        }
+    }
 } else {
-    $rooms = $roomRepo->search('');
-    foreach ($rooms as $r) {
-        if ((string)($r['status'] ?? '') !== 'Vacant') {
-            continue;
+    $availableRooms = [];
+}
+
+if ($lockRoomSelection && $prefillReservation) {
+    $roomId = (int)($prefillReservation['room_id'] ?? 0);
+    $locked = $roomRepo->findById($roomId);
+    if (!$locked) {
+        $locked = (new ReservationRepository($conn))->findRoomById($roomId);
+    }
+
+    if (!$locked && $roomId > 0) {
+        $locked = [
+            'id' => $roomId,
+            'room_no' => (string)($prefillReservation['room_no'] ?? ''),
+            'floor' => (string)($prefillReservation['floor'] ?? ''),
+            'status' => 'Vacant',
+            'room_type_id' => (int)($prefillReservation['room_type_id'] ?? 0),
+            'room_type_name' => (string)($prefillReservation['room_type_name'] ?? ''),
+            'room_type_code' => (string)($prefillReservation['room_type_code'] ?? ''),
+            'base_rate' => is_numeric((string)($prefillReservation['rate'] ?? '')) ? (float)$prefillReservation['rate'] : 0,
+        ];
+    }
+
+    $availableRooms = [];
+    if (is_array($locked) && (int)($locked['id'] ?? 0) > 0) {
+        if (!isset($locked['base_rate']) && isset($locked['rate'])) {
+            $locked['base_rate'] = $locked['rate'];
         }
-        if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
-            continue;
-        }
-        $availableRooms[] = $r;
+        $availableRooms[] = $locked;
     }
 }
 
@@ -104,7 +164,25 @@ $data = [
     'notes' => '',
 ];
 
+if ($prefillReservation) {
+    $data['guest_id'] = (int)($prefillReservation['guest_id'] ?? 0);
+    $data['source'] = (string)($prefillReservation['source'] ?? 'Website');
+    $data['checkin_date'] = (string)($prefillReservation['checkin_date'] ?? '');
+    $data['checkout_date'] = (string)($prefillReservation['checkout_date'] ?? '');
+    $data['room_id'] = (int)($prefillReservation['room_id'] ?? 0);
+    $data['rate'] = (string)($prefillReservation['rate'] ?? '');
+    $data['adults'] = (int)($prefillReservation['adults'] ?? 1);
+    $data['children'] = (int)($prefillReservation['children'] ?? 0);
+    $data['deposit_amount'] = (string)($prefillReservation['deposit_amount'] ?? '1000');
+    $data['payment_method'] = (string)($prefillReservation['payment_method'] ?? 'Cash');
+    $data['notes'] = (string)($prefillReservation['notes'] ?? '');
+}
+
 if (Request::isPost()) {
+    if ($systemReservationsOnly && !$prefillReservation) {
+        $errors['general'] = 'Walk-in creation is disabled. Please select a Pending online reservation from the list.';
+    }
+
     $data['guest_id'] = Request::int('post', 'guest_id', 0);
     $data['source'] = (string)Request::post('source', 'Walk-in');
     $data['checkin_date'] = $sanitizeDate((string)Request::post('checkin_date', ''));
@@ -118,25 +196,24 @@ if (Request::isPost()) {
     $data['payment_method'] = (string)Request::post('payment_method', 'Cash');
     $data['notes'] = (string)Request::post('notes', '');
 
-    $createPayload = [
-        'guest_id' => $data['guest_id'],
-        'source' => $data['source'],
-        'checkin_date' => $data['checkin_date'],
-        'checkout_date' => $data['checkout_date'],
-        'room_id' => $data['room_id'],
-        'rate' => is_numeric($data['rate']) ? (float)$data['rate'] : null,
-        'adults' => $data['adults'],
-        'children' => $data['children'],
-        'promo_code' => $data['promo_code'],
-        'deposit_amount' => is_numeric($data['deposit_amount']) ? (float)$data['deposit_amount'] : 0,
-        'payment_method' => $data['payment_method'],
-        'notes' => $data['notes'],
-    ];
+    if (empty($errors)) {
+        if ($prefillReservation) {
+            $payload = [];
+            if (is_numeric((string)($data['deposit_amount'] ?? ''))) {
+                $payload['deposit_amount'] = (float)$data['deposit_amount'];
+            }
+            if ((string)($data['payment_method'] ?? '') !== '') {
+                $payload['payment_method'] = (string)$data['payment_method'];
+            }
 
-    $reservationId = $reservationService->createConfirmedOneRoom($createPayload, $errors);
-    if ($reservationId > 0) {
-        Flash::set('success', 'Reservation confirmed. Receipt generated.');
-        Response::redirect('front_desk_receipt.php?id=' . $reservationId);
+            $ok = $reservationService->updateStatus((int)$prefillReservation['id'], 'Confirmed', $payload, $errors);
+            if ($ok) {
+                Flash::set('success', 'Reservation confirmed. Receipt generated.');
+                Response::redirect('front_desk_receipt.php?id=' . (int)$prefillReservation['id']);
+            }
+        } else {
+            $errors['general'] = 'Please select a Pending online reservation to confirm.';
+        }
     }
 
     $filters['checkin_date'] = $data['checkin_date'];
@@ -149,23 +226,15 @@ if (Request::isPost()) {
             $nights = (int)round(($n2 - $n1) / 86400);
         }
     }
-    $availableRooms = [];
-    if ($filters['checkin_date'] !== '' && $filters['checkout_date'] !== '') {
-        $availableRooms = $reservationService->findAvailableRooms(
-            $filters['checkin_date'],
-            $filters['checkout_date'],
-            $filters['room_type_id']
-        );
-    } else {
-        $rooms = $roomRepo->search('');
-        foreach ($rooms as $r) {
-            if ((string)($r['status'] ?? '') !== 'Vacant') {
-                continue;
-            }
-            if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
-                continue;
-            }
-            $availableRooms[] = $r;
+    if ($lockRoomSelection && $prefillReservation) {
+        $roomId = (int)($prefillReservation['room_id'] ?? 0);
+        $locked = $roomRepo->findById($roomId);
+        if (!$locked) {
+            $locked = (new ReservationRepository($conn))->findRoomById($roomId);
+        }
+        $availableRooms = [];
+        if (is_array($locked) && (int)($locked['id'] ?? 0) > 0) {
+            $availableRooms[] = $locked;
         }
     }
 }
@@ -220,36 +289,41 @@ include __DIR__ . '/../partials/sidebar.php';
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-1">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">Search Availability</h3>
+                <h3 class="text-lg font-medium text-gray-900 mb-2">Online Reservations</h3>
+                <div class="text-xs text-gray-500 mb-4">Pending bookings requested by guests (Website). Click a guest to auto-fill and confirm.</div>
 
-                <form method="get" class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Check-in</label>
-                        <input type="date" name="checkin_date" min="2000-01-01" max="2100-12-31" value="<?= htmlspecialchars($filters['checkin_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                <?php if (empty($pendingOnlineReservations)): ?>
+                    <div class="rounded-lg border border-gray-100 bg-gray-50 p-4 text-sm text-gray-600">
+                        No pending online reservations.
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Check-out</label>
-                        <input type="date" name="checkout_date" min="2000-01-01" max="2100-12-31" value="<?= htmlspecialchars($filters['checkout_date']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                <?php else: ?>
+                    <div class="space-y-2" style="max-height: 520px; overflow:auto;">
+                        <?php foreach ($pendingOnlineReservations as $pr): ?>
+                            <?php
+                                $name = trim((string)($pr['first_name'] ?? '') . ' ' . (string)($pr['last_name'] ?? ''));
+                                $roomLabel = trim(((string)($pr['room_no'] ?? '')) !== '' ? ('Room ' . (string)$pr['room_no'] . ' • ') : '') . (string)($pr['room_type_name'] ?? '');
+                            ?>
+                            <a href="front_desk.php?reservation_id=<?= (int)($pr['id'] ?? 0) ?>" class="block rounded-xl border border-gray-100 hover:border-gray-900 transition p-3">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div class="text-sm font-medium text-gray-900"><?= htmlspecialchars($name !== '' ? $name : ('Guest #' . (int)($pr['guest_id'] ?? 0))) ?></div>
+                                        <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($pr['phone'] ?? '')) ?></div>
+                                        <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($pr['checkin_date'] ?? '')) ?> → <?= htmlspecialchars((string)($pr['checkout_date'] ?? '')) ?></div>
+                                        <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars($roomLabel) ?></div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-xs text-gray-500">Ref</div>
+                                        <div class="text-xs font-semibold text-gray-900 mt-1"><?= htmlspecialchars((string)($pr['reference_no'] ?? '')) ?></div>
+                                    </div>
+                                </div>
+                            </a>
+                        <?php endforeach; ?>
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Room Type (optional)</label>
-                        <select name="room_type_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
-                            <option value="0">All Types</option>
-                            <?php foreach ($roomTypes as $rt): ?>
-                                <option value="<?= (int)$rt['id'] ?>" <?= (int)$filters['room_type_id'] === (int)$rt['id'] ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($rt['code'] . ' - ' . $rt['name']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Guest Search (optional)</label>
-                        <input name="guest_q" value="<?= htmlspecialchars($filters['guest_q']) ?>" placeholder="Name, phone, email" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                    </div>
+                <?php endif; ?>
 
-                    <button class="w-full px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 transition">Search</button>
+                <div class="mt-4">
                     <a href="<?= htmlspecialchars(App::baseUrl()) ?>/PHP/modules/guests/create.php" class="block w-full text-center px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Create Guest</a>
-                </form>
+                </div>
             </div>
 
             <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-2">
@@ -258,18 +332,39 @@ include __DIR__ . '/../partials/sidebar.php';
                     <div class="text-xs text-gray-500">Deposit required for confirmation</div>
                 </div>
 
+                <?php if ($systemReservationsOnly && !$prefillReservation): ?>
+                    <div class="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                        Select a <span class="font-medium">Pending</span> online reservation from the list to auto-fill details and confirm payment.
+                    </div>
+                <?php endif; ?>
+
                 <form method="post" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="md:col-span-2">
                         <label class="block text-sm font-medium text-gray-700 mb-1">Guest</label>
-                        <select name="guest_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                        <select id="guest_id" name="guest_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" <?= $prefillReservation ? 'disabled' : '' ?>>
                             <option value="0">Select Guest</option>
                             <?php foreach ($guests as $g): ?>
                                 <?php $label = trim(($g['first_name'] ?? '') . ' ' . ($g['last_name'] ?? '')); ?>
-                                <option value="<?= (int)$g['id'] ?>" <?= (int)$data['guest_id'] === (int)$g['id'] ? 'selected' : '' ?>>
+                                <?php
+                                    $pendingRid = 0;
+                                    foreach ($pendingOnlineReservations as $pr) {
+                                        if ((int)($pr['guest_id'] ?? 0) === (int)($g['id'] ?? 0)) {
+                                            $pendingRid = (int)($pr['id'] ?? 0);
+                                            break;
+                                        }
+                                    }
+                                ?>
+                                <option value="<?= (int)$g['id'] ?>" data-pending-reservation-id="<?= (int)$pendingRid ?>" <?= (int)$data['guest_id'] === (int)$g['id'] ? 'selected' : '' ?>>
                                     <?= htmlspecialchars($label . ' • ' . ($g['phone'] ?? '')) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if ($prefillReservation): ?>
+                            <input type="hidden" name="guest_id" value="<?= (int)($data['guest_id'] ?? 0) ?>" />
+                        <?php endif; ?>
+                        <div id="noPendingReservationNotice" class="hidden text-xs text-amber-700 mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                            This guest has no Pending online reservation. Please select a guest from the Online Reservations list.
+                        </div>
                         <?php if (isset($errors['guest_id'])): ?>
                             <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['guest_id']) ?></div>
                         <?php endif; ?>
@@ -316,7 +411,7 @@ include __DIR__ . '/../partials/sidebar.php';
 
                     <div class="md:col-span-2">
                         <label class="block text-sm font-medium text-gray-700 mb-1">Available Room</label>
-                        <select id="room_id" name="room_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                        <select id="room_id" name="room_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" <?= $lockRoomSelection ? 'disabled' : '' ?>>
                             <option value="0">Select Available Room</option>
                             <?php foreach ($availableRooms as $r): ?>
                                 <option value="<?= (int)$r['id'] ?>" data-rate="<?= htmlspecialchars((string)($r['base_rate'] ?? 0)) ?>" <?= (int)$data['room_id'] === (int)$r['id'] ? 'selected' : '' ?>>
@@ -324,6 +419,14 @@ include __DIR__ . '/../partials/sidebar.php';
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if ($lockRoomSelection): ?>
+                            <input type="hidden" name="room_id" value="<?= (int)($data['room_id'] ?? 0) ?>" />
+                        <?php endif; ?>
+                        <?php if ($lockRoomSelection): ?>
+                            <div class="text-xs text-gray-500 mt-2">
+                                This reservation was created online. Room selection is locked to the guest-selected room.
+                            </div>
+                        <?php endif; ?>
                         <?php if (empty($availableRooms)): ?>
                             <div class="text-xs text-gray-500 mt-2">
                                 No rooms to show. Select a date range to check availability, or ensure you have rooms in <span class="font-medium">Vacant</span> status.
@@ -457,6 +560,23 @@ include __DIR__ . '/../partials/sidebar.php';
                         sel.value = String(roomId);
                         sel.dispatchEvent(new Event('change'));
                     }
+
+                    (function () {
+                        const guestSel = document.getElementById('guest_id');
+                        if (!guestSel) return;
+                        guestSel.addEventListener('change', function () {
+                            const opt = guestSel.options[guestSel.selectedIndex];
+                            if (!opt) return;
+                            const rid = parseInt(opt.getAttribute('data-pending-reservation-id') || '0', 10);
+                            const notice = document.getElementById('noPendingReservationNotice');
+                            if (rid > 0) {
+                                if (notice) notice.classList.add('hidden');
+                                window.location.href = 'front_desk.php?reservation_id=' + encodeURIComponent(String(rid));
+                            } else {
+                                if (notice) notice.classList.remove('hidden');
+                            }
+                        });
+                    })();
 
                     (function () {
                         const checkin = document.getElementById('res_checkin');

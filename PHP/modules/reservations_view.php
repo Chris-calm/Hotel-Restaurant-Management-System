@@ -85,6 +85,9 @@ include __DIR__ . '/../partials/sidebar.php';
             </div>
             <div class="flex items-center gap-2">
                 <a href="reservations.php" class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Back</a>
+                <?php if ((string)($reservation['status'] ?? '') === 'Pending'): ?>
+                    <a href="front_desk.php?reservation_id=<?= (int)$reservation['id'] ?>" class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Confirm in Front Desk</a>
+                <?php endif; ?>
                 <a href="front_desk_receipt.php?id=<?= (int)$reservation['id'] ?>" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 transition">Receipt</a>
             </div>
         </div>

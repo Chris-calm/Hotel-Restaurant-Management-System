@@ -24,7 +24,14 @@ $APP_BASE_URL = App::baseUrl();
 $tab = (string)Request::get('tab', 'housekeeping');
 
 $roomQ = (string)Request::get('room_q', '');
-$rooms = $housekeepingService->listRooms($roomQ);
+$roomsAll = $housekeepingService->listRooms($roomQ);
+$rooms = [];
+foreach ($roomsAll as $r) {
+    if ((string)($r['status'] ?? '') !== 'Vacant') {
+        continue;
+    }
+    $rooms[] = $r;
+}
 $tasks = $housekeepingService->listOpenTasks();
 
 $ticketStatus = (string)Request::get('ticket_status', '');

@@ -52,6 +52,11 @@ final class ReservationService
         return $this->repo->listReservations($filters);
     }
 
+    public function listPendingOnlineReservations(int $limit = 50): array
+    {
+        return $this->repo->listPendingOnlineReservations($limit);
+    }
+
     public function listPromoCodes(): array
     {
         return $this->repo->listPromoCodes();

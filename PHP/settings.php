@@ -8,12 +8,14 @@ $conn = Database::getConnection();
 $APP_BASE_URL = App::baseUrl();
 
 $userId = (int)($_SESSION['user_id'] ?? 0);
+$guestId = (int)($_SESSION['guest_id'] ?? 0);
 $errors = [];
 
 $root = dirname(__DIR__);
 
 $user = null;
 $hasUsers = false;
+$guestLoyalty = null;
 
 if ($conn) {
     try {
@@ -36,6 +38,28 @@ if ($conn && $hasUsers && $userId > 0) {
         $res = $stmt->get_result();
         $user = $res->fetch_assoc() ?: null;
         $stmt->close();
+    }
+
+    if ($guestId > 0) {
+        try {
+            $dbRow = $conn->query('SELECT DATABASE()');
+            $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+            $db = $conn->real_escape_string($db);
+            if ($db !== '') {
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME IN ('loyalty_points','loyalty_tier')");
+                $hasCols = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+                if ($hasCols === 2) {
+                    $gStmt = $conn->prepare('SELECT loyalty_points, loyalty_tier FROM guests WHERE id = ? LIMIT 1');
+                    if ($gStmt instanceof mysqli_stmt) {
+                        $gStmt->bind_param('i', $guestId);
+                        $gStmt->execute();
+                        $guestLoyalty = $gStmt->get_result()->fetch_assoc() ?: null;
+                        $gStmt->close();
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+        }
     }
 }
 
@@ -275,6 +299,23 @@ include __DIR__ . '/partials/sidebar.php';
                     </div>
 
                     <div class="space-y-4">
+                        <?php if ($guestLoyalty): ?>
+                            <div class="rounded-lg border border-gray-100 p-4 bg-gray-50">
+                                <div class="text-xs text-gray-500">Loyalty</div>
+                                <div class="mt-2 grid grid-cols-2 gap-3">
+                                    <div class="rounded-lg border border-gray-100 bg-white p-3">
+                                        <div class="text-xs text-gray-500">Points</div>
+                                        <div class="text-sm font-semibold text-gray-900 mt-1"><?= (int)($guestLoyalty['loyalty_points'] ?? 0) ?></div>
+                                    </div>
+                                    <div class="rounded-lg border border-gray-100 bg-white p-3">
+                                        <div class="text-xs text-gray-500">Tier</div>
+                                        <div class="text-sm font-semibold text-gray-900 mt-1"><?= htmlspecialchars(trim((string)($guestLoyalty['loyalty_tier'] ?? '')) !== '' ? (string)$guestLoyalty['loyalty_tier'] : 'None') ?></div>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-3">Points are earned from eligible stays and purchases posted by staff.</div>
+                            </div>
+                        <?php endif; ?>
+
                         <div class="rounded-lg border border-gray-100 p-4">
                             <div class="text-sm font-medium text-gray-900 mb-2">Change username</div>
                             <form method="post" class="space-y-2">

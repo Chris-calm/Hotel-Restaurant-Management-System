@@ -6,6 +6,23 @@ require_once 'PHP/core/bootstrap.php';
 
 $APP_BASE_URL = App::baseUrl();
 
+$hasUsersGuestIdColumn = false;
+if (isset($conn) && $conn instanceof mysqli) {
+    try {
+        $dbRow = $conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $conn->real_escape_string($db);
+        if ($db !== '') {
+            $res = $conn->query(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'users' AND COLUMN_NAME = 'guest_id'"
+            );
+            $hasUsersGuestIdColumn = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+        }
+    } catch (Throwable $e) {
+        $hasUsersGuestIdColumn = false;
+    }
+}
+
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $username = trim($_POST['username']);
     $password = trim($_POST['password']);
@@ -19,7 +36,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     }
 
     // Prepare statement to prevent SQL injection
-    $stmt = $conn->prepare("SELECT id, username, password_hash, role, email FROM users WHERE username = ?");
+    $stmt = $conn->prepare(
+        $hasUsersGuestIdColumn
+            ? "SELECT id, guest_id, username, password_hash, role, email FROM users WHERE username = ?"
+            : "SELECT id, username, password_hash, role, email FROM users WHERE username = ?"
+    );
     $stmt->bind_param("s", $username);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -60,12 +81,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         $_SESSION['user_id'] = $user['id'];
                         $_SESSION['username'] = $user['username'];
                         $_SESSION['role'] = $user['role'];
+                        if ($hasUsersGuestIdColumn) {
+                            $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+                        }
                         
                         $otp_stmt->close();
                         $stmt->close();
                         $conn->close();
                         
-                        header("Location: PHP/Dashboard.php?email_warning=1");
+                        if (($user['role'] ?? '') === 'guest') {
+                            header("Location: PHP/guest/index.php?email_warning=1");
+                        } else {
+                            header("Location: PHP/Dashboard.php?email_warning=1");
+                        }
                         exit();
                     }
                 } else {
@@ -73,12 +101,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     $_SESSION['user_id'] = $user['id'];
                     $_SESSION['username'] = $user['username'];
                     $_SESSION['role'] = $user['role'];
+                    if ($hasUsersGuestIdColumn) {
+                        $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+                    }
                     
                     $otp_stmt->close();
                     $stmt->close();
                     $conn->close();
                     
-                    header("Location: PHP/Dashboard.php");
+                    if (($user['role'] ?? '') === 'guest') {
+                        header("Location: PHP/guest/index.php");
+                    } else {
+                        header("Location: PHP/Dashboard.php");
+                    }
                     exit();
                 }
             } else {
@@ -86,11 +121,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['username'] = $user['username'];
                 $_SESSION['role'] = $user['role'];
+                if ($hasUsersGuestIdColumn) {
+                    $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+                }
                 
                 $stmt->close();
                 $conn->close();
                 
-                header("Location: PHP/Dashboard.php");
+                if (($user['role'] ?? '') === 'guest') {
+                    header("Location: PHP/guest/index.php");
+                } else {
+                    header("Location: PHP/Dashboard.php");
+                }
                 exit();
             }
         }
@@ -446,6 +488,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
           <button type="submit" class="btn-login">Sign In</button>
         </form>
+
+        <div style="margin-top: 16px; text-align: center;">
+          <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/register.php" style="color:#007bff; text-decoration:none; font-weight:600;">
+            Create an account
+          </a>
+          <div style="margin-top: 6px; font-size: 12px; color: #6b7280;">
+            Book rooms online and bring your deposit slip to the front desk for confirmation.
+          </div>
+        </div>
       </div>
       
       <?php if (isset($_GET['error'])): ?>

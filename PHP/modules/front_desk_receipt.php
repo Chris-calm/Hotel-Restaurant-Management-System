@@ -58,6 +58,7 @@ $APP_BASE_URL = App::baseUrl();
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title><?= htmlspecialchars($pageTitle) ?></title>
     <link rel="stylesheet" href="<?= htmlspecialchars($APP_BASE_URL) ?>/CSS/index.css" />
+    <?php include __DIR__ . '/../partials/styles.php'; ?>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @media print {
@@ -106,7 +107,7 @@ $APP_BASE_URL = App::baseUrl();
         <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-gray-100 p-6 md:p-8 print-card">
             <div class="flex items-start justify-between gap-4 mb-6">
                 <div class="flex items-center gap-3">
-                    <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PICTURES/hms-logo.svg" alt="Logo" style="width:42px;height:42px;" />
+                    <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/H.png" alt="Logo" style="width:42px;height:42px;" />
                     <div>
                         <div class="text-sm font-semibold text-gray-900">Hotel Management System</div>
                         <div class="text-xs text-gray-500">Reservation Confirmation</div>

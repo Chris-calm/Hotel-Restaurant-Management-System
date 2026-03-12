@@ -52,6 +52,42 @@ final class ReservationRepository
         return $rows;
     }
 
+    public function listPendingOnlineReservations(int $limit = 50): array
+    {
+        if (!$this->conn) {
+            return [];
+        }
+
+        $limit = max(1, min(200, $limit));
+
+        $sql =
+            "SELECT r.id, r.reference_no, r.status, r.source, r.checkin_date, r.checkout_date, r.created_at,
+                    g.id AS guest_id, g.first_name, g.last_name, g.phone, g.email,
+                    rr.room_id, rooms.room_no,
+                    rt.name AS room_type_name
+             FROM reservations r
+             INNER JOIN guests g ON g.id = r.guest_id
+             LEFT JOIN reservation_rooms rr ON rr.reservation_id = r.id
+             LEFT JOIN rooms ON rooms.id = rr.room_id
+             LEFT JOIN room_types rt ON rt.id = rr.room_type_id
+             WHERE r.status = 'Pending' AND r.source = 'Website'
+             ORDER BY r.id DESC
+             LIMIT {$limit}";
+
+        $stmt = $this->conn->prepare($sql);
+        if (!($stmt instanceof mysqli_stmt)) {
+            return [];
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $rows = [];
+        while ($row = $res->fetch_assoc()) {
+            $rows[] = $row;
+        }
+        $stmt->close();
+        return $rows;
+    }
+
     private function hasRoomImageColumn(): bool
     {
         if ($this->hasRoomImageColumn !== null) {
@@ -444,18 +480,18 @@ final class ReservationRepository
         }
 
         $roomTypeImageSelect = $this->hasRoomTypeImageColumn()
-            ? 'room_types.image_path AS room_type_image_path,'
-            : 'NULL AS room_type_image_path,';
+            ? 'room_types.image_path AS room_type_image_path'
+            : 'NULL AS room_type_image_path';
 
         $roomImageSelect = $this->hasRoomImageColumn()
-            ? 'rooms.image_path AS room_image_path,'
-            : 'NULL AS room_image_path,';
+            ? 'rooms.image_path AS room_image_path'
+            : 'NULL AS room_image_path';
 
         $stmt = $this->conn->prepare(
             "SELECT rooms.id, rooms.room_no, rooms.floor, rooms.status AS room_status,
                     room_types.id AS room_type_id, room_types.code AS room_type_code, room_types.name AS room_type_name,
                     room_types.base_rate,
-                    {$roomTypeImageSelect}
+                    {$roomTypeImageSelect},
                     {$roomImageSelect}
              FROM rooms
              INNER JOIN room_types ON room_types.id = rooms.room_type_id

@@ -18,6 +18,21 @@ if (!$conn) {
     Response::redirect('../index.php');
 }
 
+$hasUsersGuestIdColumn = false;
+try {
+    $dbRow = $conn->query('SELECT DATABASE()');
+    $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+    $db = $conn->real_escape_string($db);
+    if ($db !== '') {
+        $res = $conn->query(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'users' AND COLUMN_NAME = 'guest_id'"
+        );
+        $hasUsersGuestIdColumn = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+    }
+} catch (Throwable $e) {
+    $hasUsersGuestIdColumn = false;
+}
+
 $errors = [];
 
 if (Request::isPost()) {
@@ -49,7 +64,11 @@ if (Request::isPost()) {
                 } elseif (!hash_equals((string)$row['otp_code'], $otp)) {
                     $errors['otp'] = 'Invalid OTP.';
                 } else {
-                    $uStmt = $conn->prepare("SELECT id, username, role FROM users WHERE id = ? LIMIT 1");
+                    $uStmt = $conn->prepare(
+                        $hasUsersGuestIdColumn
+                            ? "SELECT id, guest_id, username, role FROM users WHERE id = ? LIMIT 1"
+                            : "SELECT id, username, role FROM users WHERE id = ? LIMIT 1"
+                    );
                     if ($uStmt instanceof mysqli_stmt) {
                         $uStmt->bind_param('i', $userId);
                         $uStmt->execute();
@@ -64,7 +83,15 @@ if (Request::isPost()) {
                             $_SESSION['username'] = (string)$user['username'];
                             $_SESSION['role'] = (string)$user['role'];
 
-                            Response::redirect('Dashboard.php');
+                            if ($hasUsersGuestIdColumn) {
+                                $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+                            }
+
+                            if ((string)($user['role'] ?? '') === 'guest') {
+                                Response::redirect('guest/index.php');
+                            } else {
+                                Response::redirect('Dashboard.php');
+                            }
                         } else {
                             $errors['otp'] = 'User not found.';
                         }
