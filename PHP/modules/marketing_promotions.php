@@ -22,6 +22,16 @@ $reservationService = new ReservationService(
 );
 
 $errors = [];
+$form = [
+    'code' => '',
+    'discount_type' => 'Percent',
+    'discount_value' => '',
+    'start_date' => '',
+    'end_date' => '',
+    'max_uses' => '',
+    'is_active' => 1,
+    'notes' => '',
+];
 
 if (Request::isPost()) {
     $action = (string)Request::post('action', '');
@@ -37,6 +47,8 @@ if (Request::isPost()) {
             'is_active' => ((string)Request::post('is_active', '1') === '1') ? 1 : 0,
             'notes' => (string)Request::post('notes', ''),
         ];
+
+        $form = $payload;
 
         $id = $reservationService->createPromoCode($payload, $errors);
         if ($id > 0) {
@@ -57,6 +69,21 @@ if (Request::isPost()) {
 }
 
 $promoCodes = $reservationService->listPromoCodes();
+
+$today = date('Y-m-d');
+$isScheduled = static function (string $start, string $today): bool {
+    return $start !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $start) && $start > $today;
+};
+$isExpired = static function (string $end, string $today): bool {
+    return $end !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $end) && $end < $today;
+};
+$isMaxed = static function ($maxUses, int $used): bool {
+    if ($maxUses === null || $maxUses === '') {
+        return false;
+    }
+    $m = (int)$maxUses;
+    return $m > 0 && $used >= $m;
+};
 
 $pendingApprovals = [];
 
@@ -116,13 +143,31 @@ include __DIR__ . '/../partials/sidebar.php';
                                 <?php foreach ($promoCodes as $p): ?>
                                     <?php
                                         $active = (int)($p['is_active'] ?? 0) === 1;
-                                        $badge = $active ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-700';
                                         $type = (string)($p['discount_type'] ?? '');
                                         $val = (float)($p['discount_value'] ?? 0);
                                         $start = (string)($p['start_date'] ?? '');
                                         $end = (string)($p['end_date'] ?? '');
                                         $maxUses = $p['max_uses'] ?? null;
                                         $used = (int)($p['used_count'] ?? 0);
+
+                                        $scheduled = $isScheduled($start, $today);
+                                        $expired = $isExpired($end, $today);
+                                        $maxed = $isMaxed($maxUses, $used);
+
+                                        $statusText = $active ? 'Active' : 'Inactive';
+                                        $badge = $active ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-700';
+                                        if ($expired) {
+                                            $statusText = 'Expired';
+                                            $badge = 'border-red-200 bg-red-50 text-red-700';
+                                        } elseif ($scheduled) {
+                                            $statusText = 'Scheduled';
+                                            $badge = 'border-blue-200 bg-blue-50 text-blue-700';
+                                        } elseif ($maxed) {
+                                            $statusText = 'Maxed Out';
+                                            $badge = 'border-amber-200 bg-amber-50 text-amber-800';
+                                        }
+
+                                        $canBeUsed = $active && !$scheduled && !$expired && !$maxed;
                                     ?>
                                     <tr class="hover:bg-gray-50">
                                         <td class="px-4 py-3">
@@ -147,17 +192,24 @@ include __DIR__ . '/../partials/sidebar.php';
                                             <?= (int)$used ?><?= ($maxUses !== null && $maxUses !== '' && (int)$maxUses > 0) ? (' / ' . (int)$maxUses) : '' ?>
                                         </td>
                                         <td class="px-4 py-3 text-right">
-                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>"><?= $active ? 'Active' : 'Inactive' ?></span>
+                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs border <?= htmlspecialchars($badge) ?>"><?= htmlspecialchars($statusText) ?></span>
                                         </td>
                                         <td class="px-4 py-3 text-right">
                                             <form method="post" class="inline">
                                                 <input type="hidden" name="action" value="set_promo_active" />
                                                 <input type="hidden" name="promo_id" value="<?= (int)($p['id'] ?? 0) ?>" />
                                                 <input type="hidden" name="is_active" value="<?= $active ? '0' : '1' ?>" />
-                                                <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">
-                                                    <?= $active ? 'Disable' : 'Enable' ?>
-                                                </button>
+                                                <?php if ($active): ?>
+                                                    <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Disable</button>
+                                                <?php else: ?>
+                                                    <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs transition <?= (!$scheduled && !$expired && !$maxed) ? 'hover:bg-gray-50' : 'opacity-50 cursor-not-allowed' ?>" <?= (!$scheduled && !$expired && !$maxed) ? '' : 'disabled' ?>>Enable</button>
+                                                <?php endif; ?>
                                             </form>
+                                            <?php if (!$canBeUsed): ?>
+                                                <div class="text-xs text-gray-400 mt-1">
+                                                    Not applicable now.
+                                                </div>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -179,42 +231,42 @@ include __DIR__ . '/../partials/sidebar.php';
                     <input type="hidden" name="action" value="create_promo" />
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Code</label>
-                        <input name="code" placeholder="e.g., SUMMER10" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input name="code" value="<?= htmlspecialchars((string)($form['code'] ?? '')) ?>" placeholder="e.g., SUMMER10" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Discount Type</label>
                             <select name="discount_type" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
-                                <option value="Percent">Percent</option>
-                                <option value="Fixed">Fixed</option>
+                                <option value="Percent" <?= ((string)($form['discount_type'] ?? 'Percent')) === 'Percent' ? 'selected' : '' ?>>Percent</option>
+                                <option value="Fixed" <?= ((string)($form['discount_type'] ?? 'Percent')) === 'Fixed' ? 'selected' : '' ?>>Fixed</option>
                             </select>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Discount Value</label>
-                            <input name="discount_value" placeholder="e.g., 10 or 500" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                            <input name="discount_value" value="<?= htmlspecialchars((string)($form['discount_value'] ?? '')) ?>" placeholder="e.g., 10 or 500" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                         </div>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Start Date (optional)</label>
-                            <input type="date" name="start_date" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                            <input type="date" name="start_date" value="<?= htmlspecialchars((string)($form['start_date'] ?? '')) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">End Date (optional)</label>
-                            <input type="date" name="end_date" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                            <input type="date" name="end_date" value="<?= htmlspecialchars((string)($form['end_date'] ?? '')) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                         </div>
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Max Uses (optional)</label>
-                        <input name="max_uses" placeholder="Leave blank for unlimited" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input name="max_uses" value="<?= htmlspecialchars((string)($form['max_uses'] ?? '')) ?>" placeholder="Leave blank for unlimited" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
-                        <textarea name="notes" rows="3" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"></textarea>
+                        <textarea name="notes" rows="3" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"><?= htmlspecialchars((string)($form['notes'] ?? '')) ?></textarea>
                     </div>
                     <div class="flex items-center gap-2">
                         <input type="hidden" name="is_active" value="0" />
-                        <input type="checkbox" name="is_active" value="1" class="h-4 w-4" checked />
+                        <input type="checkbox" name="is_active" value="1" class="h-4 w-4" <?= ((int)($form['is_active'] ?? 1) === 1) ? 'checked' : '' ?> />
                         <label class="text-sm text-gray-700">Active</label>
                     </div>
                     <div class="pt-2">

@@ -24,6 +24,8 @@ $sanitizeDate = static function (string $v): string {
 $startDate = $sanitizeDate((string)Request::get('start_date', date('Y-m-d')));
 $endDate = $sanitizeDate((string)Request::get('end_date', date('Y-m-d', strtotime('+7 days'))));
 $roomTypeId = (int)Request::get('room_type_id', 0);
+$autoPricingRaw = (string)Request::get('auto_pricing', '1');
+$autoPricing = ($autoPricingRaw === '1' || strcasecmp($autoPricingRaw, 'true') === 0 || strcasecmp($autoPricingRaw, 'on') === 0);
 $markupPctRaw = (string)Request::get('markup_pct', '0');
 $markupPct = is_numeric($markupPctRaw) ? (float)$markupPctRaw : 0.0;
 $export = (string)Request::get('export', '');
@@ -31,11 +33,30 @@ $export = (string)Request::get('export', '');
 $errors = [];
 $report = [];
 
-if ($startDate !== '' && $endDate !== '') {
+if ($startDate === '' || $endDate === '') {
+    $errors[] = 'Invalid date range.';
+} else {
     $t1 = strtotime($startDate);
     $t2 = strtotime($endDate);
     if ($t1 === false || $t2 === false || $t2 < $t1) {
         $errors[] = 'Invalid date range.';
+    } else {
+        $maxDays = 62;
+        $rangeDays = (int)floor(($t2 - $t1) / 86400) + 1;
+        if ($rangeDays > $maxDays) {
+            $errors[] = 'Date range too long. Max 62 days.';
+        }
+    }
+}
+
+if (!is_numeric($markupPctRaw)) {
+    $errors[] = 'Invalid markup percent.';
+} else {
+    if ($markupPct < -90.0) {
+        $markupPct = -90.0;
+    }
+    if ($markupPct > 500.0) {
+        $markupPct = 500.0;
     }
 }
 
@@ -70,29 +91,30 @@ if (empty($errors) && $startDate !== '' && $endDate !== '' && $conn) {
     $end = strtotime($endDate);
     $maxDays = 62;
     $days = 0;
+
+    $reservedStmt = $conn->prepare(
+        "SELECT ro.room_type_id, COUNT(DISTINCT rr.room_id) AS reserved_rooms
+         FROM reservation_rooms rr
+         INNER JOIN reservations r ON r.id = rr.reservation_id
+         INNER JOIN rooms ro ON ro.id = rr.room_id
+         WHERE r.status IN {$statusSql}
+           AND r.checkin_date <= ?
+           AND r.checkout_date > ?
+         GROUP BY ro.room_type_id"
+    );
+
     while ($cur !== false && $end !== false && $cur <= $end && $days < $maxDays) {
         $day = date('Y-m-d', $cur);
 
         $reservedByType = [];
-        $stmt = $conn->prepare(
-            "SELECT ro.room_type_id, COUNT(DISTINCT rr.room_id) AS reserved_rooms
-             FROM reservation_rooms rr
-             INNER JOIN reservations r ON r.id = rr.reservation_id
-             INNER JOIN rooms ro ON ro.id = rr.room_id
-             WHERE r.status IN {$statusSql}
-               AND r.checkin_date <= ?
-               AND r.checkout_date > ?
-             GROUP BY ro.room_type_id"
-        );
-        if ($stmt instanceof mysqli_stmt) {
-            $stmt->bind_param('ss', $day, $day);
-            $stmt->execute();
-            $rRes = $stmt->get_result();
+        if ($reservedStmt instanceof mysqli_stmt) {
+            $reservedStmt->bind_param('ss', $day, $day);
+            $reservedStmt->execute();
+            $rRes = $reservedStmt->get_result();
             while ($row = $rRes->fetch_assoc()) {
                 $rtid = (int)($row['room_type_id'] ?? 0);
                 $reservedByType[$rtid] = (int)($row['reserved_rooms'] ?? 0);
             }
-            $stmt->close();
         }
 
         foreach ($totals as $rtid => $info) {
@@ -105,8 +127,34 @@ if (empty($errors) && $startDate !== '' && $endDate !== '' && $conn) {
 
             $baseRate = (float)($info['base_rate'] ?? 0);
             $suggestedRate = $baseRate;
-            if ($markupPct !== 0.0) {
+
+            if ($autoPricing) {
+                $occ = 0.0;
+                if ($totalRooms > 0) {
+                    $occ = $reservedRooms / $totalRooms;
+                }
+
+                $demandFactor = 1.0;
+                if ($occ >= 0.90) {
+                    $demandFactor = 1.25;
+                } elseif ($occ >= 0.75) {
+                    $demandFactor = 1.15;
+                } elseif ($occ >= 0.50) {
+                    $demandFactor = 1.05;
+                } elseif ($occ <= 0.20) {
+                    $demandFactor = 0.90;
+                }
+
+                $dow = (int)date('N', strtotime($day) ?: time());
+                $weekendFactor = ($dow >= 5) ? 1.10 : 1.00;
+
+                $suggestedRate = $baseRate * $demandFactor * $weekendFactor;
+            } elseif ($markupPct !== 0.0) {
                 $suggestedRate = $baseRate * (1 + ($markupPct / 100));
+            }
+
+            if ($suggestedRate < 0) {
+                $suggestedRate = 0;
             }
 
             $report[] = [
@@ -124,6 +172,10 @@ if (empty($errors) && $startDate !== '' && $endDate !== '' && $conn) {
 
         $cur = strtotime('+1 day', $cur);
         $days++;
+    }
+
+    if ($reservedStmt instanceof mysqli_stmt) {
+        $reservedStmt->close();
     }
 }
 
@@ -211,7 +263,8 @@ include __DIR__ . '/../partials/sidebar.php';
                         <input type="date" name="end_date" value="<?= htmlspecialchars($endDate) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Room Type (optional)</label>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Room Type Filter (optional)</label>
+                        <div class="text-xs text-gray-500 mb-1">Selecting a room type filters the report to that room type only.</div>
                         <select name="room_type_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
                             <option value="0">All Room Types</option>
                             <?php foreach ($roomTypes as $rt): ?>
@@ -220,15 +273,44 @@ include __DIR__ . '/../partials/sidebar.php';
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Rate Markup % (optional)</label>
-                        <input name="markup_pct" value="<?= htmlspecialchars((string)$markupPct) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <div class="flex items-center justify-between gap-3 mb-1">
+                            <label class="block text-sm font-medium text-gray-700">Auto Pricing</label>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="hidden" name="auto_pricing" value="0" />
+                                <input id="autoPricingToggle" type="checkbox" name="auto_pricing" value="1" <?= $autoPricing ? 'checked' : '' ?> />
+                                <span>Enable</span>
+                            </label>
+                        </div>
+                        <label class="block text-xs text-gray-500 mb-1">Manual Markup % (used only when Auto Pricing is disabled).</label>
+                        <input id="markupPctInput" name="markup_pct" value="<?= htmlspecialchars((string)$markupPct) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="0" />
                     </div>
                     <div class="md:col-span-2 flex items-center gap-2 pt-1">
                         <button class="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black transition">Generate Report</button>
                         <a href="channel_management.php" class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Reset</a>
-                        <a href="channel_management.php?start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>&room_type_id=<?= (int)$roomTypeId ?>&markup_pct=<?= urlencode((string)$markupPct) ?>&export=csv" class="ml-auto px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Export CSV</a>
+                        <a href="channel_management.php?start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>&room_type_id=<?= (int)$roomTypeId ?>&auto_pricing=<?= $autoPricing ? '1' : '0' ?>&markup_pct=<?= urlencode((string)$markupPct) ?>&export=csv" class="ml-auto px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Export CSV</a>
                     </div>
                 </form>
+
+                <script>
+                    (function() {
+                        var toggle = document.getElementById('autoPricingToggle');
+                        var markup = document.getElementById('markupPctInput');
+                        function sync() {
+                            if (!toggle || !markup) return;
+                            if (toggle.checked) {
+                                markup.setAttribute('disabled', 'disabled');
+                                markup.classList.add('bg-gray-50');
+                            } else {
+                                markup.removeAttribute('disabled');
+                                markup.classList.remove('bg-gray-50');
+                            }
+                        }
+                        if (toggle) {
+                            toggle.addEventListener('change', sync);
+                        }
+                        sync();
+                    })();
+                </script>
             </div>
         </div>
 

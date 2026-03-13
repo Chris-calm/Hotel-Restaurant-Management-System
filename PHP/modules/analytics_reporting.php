@@ -71,20 +71,53 @@ $extraHeadHtml = <<<'HTML'
 </style>
 HTML;
 
+$sanitizeDate = static function (string $v): string {
+    $v = trim($v);
+    if ($v === '') {
+        return '';
+    }
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) {
+        return '';
+    }
+    return $v;
+};
+
 $today = date('Y-m-d');
+
+$rangeStart = $sanitizeDate((string)Request::get('start_date', date('Y-m-d', strtotime('-29 days'))));
+$rangeEnd = $sanitizeDate((string)Request::get('end_date', $today));
+
+$errors = [];
+if ($rangeStart === '' || $rangeEnd === '') {
+    $errors[] = 'Invalid date range.';
+} else {
+    $t1 = strtotime($rangeStart);
+    $t2 = strtotime($rangeEnd);
+    if ($t1 === false || $t2 === false || $t2 < $t1) {
+        $errors[] = 'Invalid date range.';
+    } else {
+        $maxDays = 366;
+        $rangeDays = (int)floor(($t2 - $t1) / 86400) + 1;
+        if ($rangeDays > $maxDays) {
+            $errors[] = 'Date range too long. Max 366 days.';
+        }
+    }
+}
+
 $days = [];
 for ($i = 6; $i >= 0; $i--) {
-    $days[] = date('Y-m-d', strtotime('-' . $i . ' day'));
+    $days[] = date('Y-m-d', strtotime($rangeEnd . ' -' . $i . ' day'));
 }
 
 $totalRooms = 0;
 $todayOccupiedRooms = 0;
 $todayOccupancyPct = 0.0;
 $todayReservations = 0;
-$monthlyReservations = 0;
-$roomRevenueMonth = 0.0;
-$posRevenueMonth = 0.0;
-$discountsMonth = 0.0;
+$rangeReservations = 0;
+$avgOccupancyPctRange = 0.0;
+$roomRevenueRange = 0.0;
+$posRevenueRange = 0.0;
+$discountsRange = 0.0;
 
 $occupancySeries = [];
 $occupancyLabels = [];
@@ -117,7 +150,7 @@ if ($conn) {
     }
 }
 
-if ($conn) {
+if ($conn && empty($errors)) {
     try {
         $res = $conn->query("SELECT COUNT(*) AS c FROM rooms");
         $totalRooms = $res ? (int)($res->fetch_assoc()['c'] ?? 0) : 0;
@@ -125,8 +158,14 @@ if ($conn) {
         $res = $conn->query("SELECT COUNT(*) AS c FROM reservations WHERE DATE(created_at) = CURDATE()");
         $todayReservations = $res ? (int)($res->fetch_assoc()['c'] ?? 0) : 0;
 
-        $res = $conn->query("SELECT COUNT(*) AS c FROM reservations WHERE DATE_FORMAT(created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')");
-        $monthlyReservations = $res ? (int)($res->fetch_assoc()['c'] ?? 0) : 0;
+        $stmt = $conn->prepare("SELECT COUNT(*) AS c FROM reservations WHERE DATE(created_at) BETWEEN ? AND ?");
+        if ($stmt instanceof mysqli_stmt) {
+            $stmt->bind_param('ss', $rangeStart, $rangeEnd);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $rangeReservations = (int)($row['c'] ?? 0);
+            $stmt->close();
+        }
 
         if ($totalRooms > 0) {
             $stmt = $conn->prepare(
@@ -139,7 +178,7 @@ if ($conn) {
                    AND rr.room_id IS NOT NULL"
             );
             if ($stmt instanceof mysqli_stmt) {
-                $stmt->bind_param('ss', $today, $today);
+                $stmt->bind_param('ss', $rangeEnd, $rangeEnd);
                 $stmt->execute();
                 $row = $stmt->get_result()->fetch_assoc();
                 $todayOccupiedRooms = (int)($row['c'] ?? 0);
@@ -148,42 +187,113 @@ if ($conn) {
             $todayOccupancyPct = $totalRooms > 0 ? round(($todayOccupiedRooms / $totalRooms) * 100, 1) : 0.0;
         }
 
-        $res = $conn->query(
-            $hasReservationDiscountColumn
-                ? "SELECT COALESCE(SUM(r.discount_amount),0) AS discounts
-                   FROM reservations r
-                   WHERE r.status NOT IN ('Cancelled','No Show')
-                     AND DATE_FORMAT(r.created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
-                : "SELECT 0 AS discounts"
-        );
-        $discountsMonth = $res ? (float)($res->fetch_assoc()['discounts'] ?? 0) : 0.0;
+        $t1 = strtotime($rangeStart);
+        $t2 = strtotime($rangeEnd);
+        $rangeDays = 0;
+        if ($t1 !== false && $t2 !== false && $t2 >= $t1) {
+            $rangeDays = (int)floor(($t2 - $t1) / 86400) + 1;
+        }
+        if ($totalRooms > 0 && $rangeDays > 0) {
+            $endPlus1 = date('Y-m-d', strtotime($rangeEnd . ' +1 day'));
+            $stmt = $conn->prepare(
+                "SELECT COALESCE(SUM(
+                        GREATEST(
+                            0,
+                            DATEDIFF(
+                                LEAST(r.checkout_date, ?),
+                                GREATEST(r.checkin_date, ?)
+                            )
+                        )
+                    ), 0) AS occupied_room_nights
+                 FROM reservations r
+                 INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
+                 WHERE r.status IN ('Confirmed','Upcoming','Checked In')
+                   AND r.checkin_date < ?
+                   AND r.checkout_date > ?
+                   AND rr.room_id IS NOT NULL"
+            );
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('ssss', $endPlus1, $rangeStart, $endPlus1, $rangeStart);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $occupiedRoomNights = (float)($row['occupied_room_nights'] ?? 0);
+                $stmt->close();
 
-        $res = $conn->query(
-            $hasReservationDiscountColumn
-                ? "SELECT COALESCE(SUM((DATEDIFF(r.checkout_date, r.checkin_date) * rr.rate) - COALESCE(r.discount_amount,0)),0) AS revenue
-                   FROM reservations r
-                   INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
-                   WHERE r.status NOT IN ('Cancelled','No Show')
-                     AND DATE_FORMAT(r.created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
-                : "SELECT COALESCE(SUM((DATEDIFF(r.checkout_date, r.checkin_date) * rr.rate)),0) AS revenue
-                   FROM reservations r
-                   INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
-                   WHERE r.status NOT IN ('Cancelled','No Show')
-                     AND DATE_FORMAT(r.created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
-        );
-        $roomRevenueMonth = $res ? (float)($res->fetch_assoc()['revenue'] ?? 0) : 0.0;
+                $denom = (float)($totalRooms * $rangeDays);
+                if ($denom > 0) {
+                    $avgOccupancyPctRange = round(($occupiedRoomNights / $denom) * 100, 1);
+                }
+            }
+        }
+
+        if ($hasReservationDiscountColumn) {
+            $stmt = $conn->prepare(
+                "SELECT COALESCE(SUM(r.discount_amount),0) AS discounts
+                 FROM reservations r
+                 WHERE r.status NOT IN ('Cancelled','No Show')
+                   AND DATE(r.created_at) BETWEEN ? AND ?"
+            );
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('ss', $rangeStart, $rangeEnd);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $discountsRange = (float)($row['discounts'] ?? 0);
+                $stmt->close();
+            }
+        }
+
+        if ($hasReservationDiscountColumn) {
+            $stmt = $conn->prepare(
+                "SELECT COALESCE(SUM((DATEDIFF(r.checkout_date, r.checkin_date) * rr.rate) - COALESCE(r.discount_amount,0)),0) AS revenue
+                 FROM reservations r
+                 INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
+                 WHERE r.status NOT IN ('Cancelled','No Show')
+                   AND DATE(r.created_at) BETWEEN ? AND ?"
+            );
+        } else {
+            $stmt = $conn->prepare(
+                "SELECT COALESCE(SUM((DATEDIFF(r.checkout_date, r.checkin_date) * rr.rate)),0) AS revenue
+                 FROM reservations r
+                 INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
+                 WHERE r.status NOT IN ('Cancelled','No Show')
+                   AND DATE(r.created_at) BETWEEN ? AND ?"
+            );
+        }
+        if ($stmt instanceof mysqli_stmt) {
+            $stmt->bind_param('ss', $rangeStart, $rangeEnd);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $roomRevenueRange = (float)($row['revenue'] ?? 0);
+            $stmt->close();
+        }
 
         if ($hasPosOrdersTable) {
-            $res = $conn->query(
+            $stmt = $conn->prepare(
                 "SELECT COALESCE(SUM(total),0) AS revenue
                  FROM pos_orders
                  WHERE status = 'Paid'
-                   AND DATE_FORMAT(created_at,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')"
+                   AND DATE(created_at) BETWEEN ? AND ?"
             );
-            $posRevenueMonth = $res ? (float)($res->fetch_assoc()['revenue'] ?? 0) : 0.0;
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('ss', $rangeStart, $rangeEnd);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $posRevenueRange = (float)($row['revenue'] ?? 0);
+                $stmt->close();
+            }
         } else {
-            $posRevenueMonth = 0.0;
+            $posRevenueRange = 0.0;
         }
+
+        $occStmt = $conn->prepare(
+            "SELECT COUNT(DISTINCT rr.room_id) AS c
+             FROM reservations r
+             INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
+             WHERE r.status IN ('Confirmed','Upcoming','Checked In')
+               AND r.checkin_date <= ?
+               AND r.checkout_date > ?
+               AND rr.room_id IS NOT NULL"
+        );
 
         foreach ($days as $d) {
             $label = date('D', strtotime($d));
@@ -193,29 +303,23 @@ if ($conn) {
                 continue;
             }
             $occ = 0;
-            $stmt = $conn->prepare(
-                "SELECT COUNT(DISTINCT rr.room_id) AS c
-                 FROM reservations r
-                 INNER JOIN reservation_rooms rr ON rr.reservation_id = r.id
-                 WHERE r.status IN ('Confirmed','Upcoming','Checked In')
-                   AND r.checkin_date <= ?
-                   AND r.checkout_date > ?
-                   AND rr.room_id IS NOT NULL"
-            );
-            if ($stmt instanceof mysqli_stmt) {
-                $stmt->bind_param('ss', $d, $d);
-                $stmt->execute();
-                $row = $stmt->get_result()->fetch_assoc();
+            if ($occStmt instanceof mysqli_stmt) {
+                $occStmt->bind_param('ss', $d, $d);
+                $occStmt->execute();
+                $row = $occStmt->get_result()->fetch_assoc();
                 $occ = (int)($row['c'] ?? 0);
-                $stmt->close();
             }
             $occupancySeries[] = (float)round(($occ / $totalRooms) * 100, 1);
         }
 
+        if ($occStmt instanceof mysqli_stmt) {
+            $occStmt->close();
+        }
+
         $salesSeries = [
-            (float)round($roomRevenueMonth, 2),
-            (float)round($posRevenueMonth, 2),
-            (float)round($discountsMonth, 2)
+            (float)round($roomRevenueRange, 2),
+            (float)round($posRevenueRange, 2),
+            (float)round($discountsRange, 2)
         ];
 
         $hasRealData = true;
@@ -234,16 +338,61 @@ include __DIR__ . '/../partials/sidebar.php';
             <p class="text-sm text-gray-500 mt-1">KPIs, revenue, occupancy, restaurant sales reports</p>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <?php if (!empty($errors)): ?>
+            <div class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                <div class="font-medium mb-1">Invalid filters</div>
+                <?php foreach ($errors as $msg): ?>
+                    <div><?= htmlspecialchars($msg) ?></div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <div class="mb-6 bg-white rounded-lg border border-gray-100 p-6">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">Filters</h3>
+                    <div class="text-sm text-gray-500 mt-1">Revenue and reservations are computed by reservation <span class="font-medium">created_at</span> inside the selected range.</div>
+                </div>
+            </div>
+            <form method="get" class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                    <input type="date" name="start_date" value="<?= htmlspecialchars($rangeStart) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                    <input type="date" name="end_date" value="<?= htmlspecialchars($rangeEnd) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div class="flex items-end gap-2">
+                    <button class="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black transition">Apply</button>
+                    <a href="analytics_reporting.php" class="px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Reset</a>
+                </div>
+            </form>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
             <div class="dashboard-card bg-white rounded-lg border border-gray-100 p-6">
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-sm font-medium text-gray-500">Today Occupancy</p>
+                        <p class="text-sm font-medium text-gray-500">Occupancy (End Date)</p>
                         <p class="text-2xl font-light text-gray-900"><?= number_format((float)$todayOccupancyPct, 1) ?>%</p>
-                        <p class="text-xs text-gray-500 mt-1"><?= (int)$todayOccupiedRooms ?> / <?= (int)$totalRooms ?> rooms</p>
+                        <p class="text-xs text-gray-500 mt-1"><?= htmlspecialchars($rangeEnd) ?> • <?= (int)$todayOccupiedRooms ?> / <?= (int)$totalRooms ?> rooms</p>
                     </div>
                     <div class="icon-container w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center">
                         <i class='bx bx-bed text-blue-600 text-xl'></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-card bg-white rounded-lg border border-gray-100 p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">Average Occupancy (Range)</p>
+                        <p class="text-2xl font-light text-gray-900"><?= number_format((float)$avgOccupancyPctRange, 1) ?>%</p>
+                        <p class="text-xs text-gray-500 mt-1"><?= htmlspecialchars($rangeStart) ?> → <?= htmlspecialchars($rangeEnd) ?></p>
+                    </div>
+                    <div class="icon-container w-12 h-12 bg-sky-50 rounded-lg flex items-center justify-center">
+                        <i class='bx bx-stats text-sky-600 text-xl'></i>
                     </div>
                 </div>
             </div>
@@ -265,8 +414,8 @@ include __DIR__ . '/../partials/sidebar.php';
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="text-sm font-medium text-gray-500">Room Revenue (Month)</p>
-                        <p class="text-2xl font-light text-gray-900">₱<?= number_format((float)$roomRevenueMonth, 2) ?></p>
-                        <p class="text-xs text-gray-500 mt-1"><?= (int)$monthlyReservations ?> reservations</p>
+                        <p class="text-2xl font-light text-gray-900">₱<?= number_format((float)$roomRevenueRange, 2) ?></p>
+                        <p class="text-xs text-gray-500 mt-1"><?= (int)$rangeReservations ?> reservations</p>
                     </div>
                     <div class="icon-container w-12 h-12 bg-green-50 rounded-lg flex items-center justify-center">
                         <i class='bx bx-money text-green-600 text-xl'></i>
@@ -278,7 +427,7 @@ include __DIR__ . '/../partials/sidebar.php';
                 <div class="flex items-center justify-between">
                     <div>
                         <p class="text-sm font-medium text-gray-500">POS Revenue (Month)</p>
-                        <p class="text-2xl font-light text-gray-900">₱<?= number_format((float)$posRevenueMonth, 2) ?></p>
+                        <p class="text-2xl font-light text-gray-900">₱<?= number_format((float)$posRevenueRange, 2) ?></p>
                         <p class="text-xs text-gray-500 mt-1">Paid orders</p>
                     </div>
                     <div class="icon-container w-12 h-12 bg-purple-50 rounded-lg flex items-center justify-center">
@@ -322,7 +471,7 @@ include __DIR__ . '/../partials/sidebar.php';
                         <i class='bx bx-purchase-tag text-yellow-700'></i>
                     </div>
                 </div>
-                <div class="text-2xl font-light text-gray-900">₱<?= number_format((float)$discountsMonth, 2) ?></div>
+                <div class="text-2xl font-light text-gray-900">₱<?= number_format((float)$discountsRange, 2) ?></div>
                 <div class="text-sm text-gray-500 mt-1">Total discount applied to reservations</div>
             </div>
 
