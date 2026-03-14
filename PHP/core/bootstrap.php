@@ -10,3 +10,4 @@ require_once __DIR__ . '/Request.php';
 require_once __DIR__ . '/Response.php';
 require_once __DIR__ . '/Validator.php';
 require_once __DIR__ . '/Flash.php';
+require_once __DIR__ . '/Totp.php';

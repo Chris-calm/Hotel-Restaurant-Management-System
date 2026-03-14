@@ -7,6 +7,8 @@ require_once 'PHP/core/bootstrap.php';
 $APP_BASE_URL = App::baseUrl();
 
 $hasUsersGuestIdColumn = false;
+$hasUser2faTable = false;
+$hasUserTrustedDevicesTable = false;
 if (isset($conn) && $conn instanceof mysqli) {
     try {
         $dbRow = $conn->query('SELECT DATABASE()');
@@ -17,9 +19,21 @@ if (isset($conn) && $conn instanceof mysqli) {
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'users' AND COLUMN_NAME = 'guest_id'"
             );
             $hasUsersGuestIdColumn = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $res = $conn->query(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_2fa'"
+            );
+            $hasUser2faTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $res = $conn->query(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices'"
+            );
+            $hasUserTrustedDevicesTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
         }
     } catch (Throwable $e) {
         $hasUsersGuestIdColumn = false;
+        $hasUser2faTable = false;
+        $hasUserTrustedDevicesTable = false;
     }
 }
 
@@ -51,6 +65,57 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         // Verify password using password_verify for hashed passwords
         $hash = (string)($user['password_hash'] ?? '');
         if ($hash !== '' && password_verify($password, $hash)) {
+
+            $isGuest = ((string)($user['role'] ?? '') === 'guest');
+
+            if ($isGuest && $hasUser2faTable) {
+                $tStmt = $conn->prepare('SELECT totp_secret, enabled FROM user_2fa WHERE user_id = ? LIMIT 1');
+                $twofa = null;
+                if ($tStmt instanceof mysqli_stmt) {
+                    $tStmt->bind_param('i', $user['id']);
+                    $tStmt->execute();
+                    $twofa = $tStmt->get_result()->fetch_assoc() ?: null;
+                    $tStmt->close();
+                }
+
+                if ($twofa && (int)($twofa['enabled'] ?? 0) === 1) {
+                    $trustedOk = false;
+                    if ($hasUserTrustedDevicesTable && isset($_COOKIE['trusted_device'])) {
+                        $rawToken = (string)$_COOKIE['trusted_device'];
+                        if ($rawToken !== '') {
+                            $tokenHash = hash('sha256', $rawToken);
+                            $dStmt = $conn->prepare(
+                                'SELECT id FROM user_trusted_devices WHERE user_id = ? AND token_hash = ? AND expires_at > NOW() LIMIT 1'
+                            );
+                            if ($dStmt instanceof mysqli_stmt) {
+                                $uid = (int)$user['id'];
+                                $dStmt->bind_param('is', $uid, $tokenHash);
+                                $dStmt->execute();
+                                $row = $dStmt->get_result()->fetch_assoc() ?: null;
+                                $dStmt->close();
+                                if ($row) {
+                                    $trustedOk = true;
+                                    $up = $conn->prepare('UPDATE user_trusted_devices SET last_used_at = NOW() WHERE id = ?');
+                                    if ($up instanceof mysqli_stmt) {
+                                        $did = (int)($row['id'] ?? 0);
+                                        $up->bind_param('i', $did);
+                                        $up->execute();
+                                        $up->close();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!$trustedOk) {
+                        $_SESSION['pending_2fa_user_id'] = (int)$user['id'];
+                        $stmt->close();
+                        $conn->close();
+                        header('Location: PHP/verify_totp.php');
+                        exit();
+                    }
+                }
+            }
             
             // Check if user has OTP enabled (superadmin and admin)
             if (in_array($username, ['superadmin', 'admin']) && !empty($user['email'])) {

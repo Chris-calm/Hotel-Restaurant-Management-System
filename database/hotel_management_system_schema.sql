@@ -28,6 +28,32 @@ CREATE TABLE IF NOT EXISTS user_otps (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS user_2fa (
+  user_id INT UNSIGNED NOT NULL PRIMARY KEY,
+  totp_secret VARCHAR(80) NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_user_2fa_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS user_trusted_devices (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  user_agent VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at DATETIME NULL DEFAULT NULL,
+  CONSTRAINT fk_user_trusted_devices_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  UNIQUE KEY uq_user_trusted_devices_token_hash (token_hash),
+  KEY idx_user_trusted_devices_user_expires (user_id, expires_at)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS guests (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   first_name VARCHAR(80) NOT NULL,

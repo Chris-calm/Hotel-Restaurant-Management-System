@@ -17,6 +17,11 @@ $user = null;
 $hasUsers = false;
 $guestLoyalty = null;
 $hasGuestProfilePicture = false;
+$hasUser2faTable = false;
+$hasUserTrustedDevicesTable = false;
+$twofa = null;
+$trustedDevices = [];
+$trustedDevicesCount = 0;
 
 if ($conn) {
     try {
@@ -26,6 +31,12 @@ if ($conn) {
         if ($db !== '') {
             $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'users'");
             $hasUsers = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_2fa'");
+            $hasUser2faTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices'");
+            $hasUserTrustedDevicesTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
         }
     } catch (Throwable $e) {
     }
@@ -39,6 +50,38 @@ if ($conn && $hasUsers && $userId > 0) {
         $res = $stmt->get_result();
         $user = $res->fetch_assoc() ?: null;
         $stmt->close();
+    }
+
+    if ($hasUser2faTable) {
+        try {
+            $tStmt = $conn->prepare('SELECT totp_secret, enabled, updated_at FROM user_2fa WHERE user_id = ? LIMIT 1');
+            if ($tStmt instanceof mysqli_stmt) {
+                $tStmt->bind_param('i', $userId);
+                $tStmt->execute();
+                $twofa = $tStmt->get_result()->fetch_assoc() ?: null;
+                $tStmt->close();
+            }
+        } catch (Throwable $e) {
+            $twofa = null;
+        }
+    }
+
+    if ($hasUserTrustedDevicesTable) {
+        try {
+            $dStmt = $conn->prepare('SELECT id, expires_at, user_agent, created_at, last_used_at FROM user_trusted_devices WHERE user_id = ? AND expires_at > NOW() ORDER BY created_at DESC LIMIT 20');
+            if ($dStmt instanceof mysqli_stmt) {
+                $dStmt->bind_param('i', $userId);
+                $dStmt->execute();
+                $res = $dStmt->get_result();
+                while ($row = $res->fetch_assoc()) {
+                    $trustedDevices[] = $row;
+                }
+                $dStmt->close();
+            }
+        } catch (Throwable $e) {
+            $trustedDevices = [];
+        }
+        $trustedDevicesCount = count($trustedDevices);
     }
 
     if ($guestId > 0) {
@@ -302,6 +345,113 @@ if (Request::isPost() && $conn && $hasUsers && $userId > 0) {
             }
         }
     }
+
+    if ($action === 'start_2fa_setup') {
+        if (!$hasUser2faTable) {
+            $errors['general'] = '2FA is unavailable. Database table missing.';
+        } elseif (($user['role'] ?? '') !== 'guest') {
+            $errors['general'] = '2FA setup is available for guest accounts only.';
+        } else {
+            $secret = Totp::generateSecret();
+            $_SESSION['pending_2fa_secret'] = $secret;
+            Flash::set('success', '2FA setup started. Enter the code from your authenticator app to confirm.');
+            Response::redirect('settings.php');
+        }
+    }
+
+    if ($action === 'confirm_2fa_setup') {
+        if (!$hasUser2faTable) {
+            $errors['general'] = '2FA is unavailable. Database table missing.';
+        } elseif (($user['role'] ?? '') !== 'guest') {
+            $errors['general'] = '2FA setup is available for guest accounts only.';
+        } else {
+            $code = trim((string)Request::post('code', ''));
+            $secret = (string)($_SESSION['pending_2fa_secret'] ?? '');
+            if ($secret === '') {
+                $errors['general'] = '2FA setup session expired. Start again.';
+            } elseif ($code === '') {
+                $errors['twofa_code'] = 'Code is required.';
+            } elseif (!Totp::verifyCode($secret, $code, 1, 30, 6)) {
+                $errors['twofa_code'] = 'Invalid code.';
+            }
+
+            if (empty($errors)) {
+                $stmt = $conn->prepare('INSERT INTO user_2fa (user_id, totp_secret, enabled) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE totp_secret = VALUES(totp_secret), enabled = 1');
+                if ($stmt instanceof mysqli_stmt) {
+                    $stmt->bind_param('is', $userId, $secret);
+                    $ok = $stmt->execute();
+                    $stmt->close();
+                    if ($ok) {
+                        unset($_SESSION['pending_2fa_secret']);
+                        Flash::set('success', 'Two-factor authentication enabled.');
+                        Response::redirect('settings.php');
+                    }
+                }
+                $errors['general'] = 'Failed to enable 2FA.';
+            }
+        }
+    }
+
+    if ($action === 'disable_2fa') {
+        if (!$hasUser2faTable) {
+            $errors['general'] = '2FA is unavailable. Database table missing.';
+        } elseif (($user['role'] ?? '') !== 'guest') {
+            $errors['general'] = '2FA is available for guest accounts only.';
+        } else {
+            $stmt = $conn->prepare('UPDATE user_2fa SET enabled = 0 WHERE user_id = ?');
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $userId);
+                $ok = $stmt->execute();
+                $stmt->close();
+                if ($ok) {
+                    if ($hasUserTrustedDevicesTable) {
+                        $d = $conn->prepare('DELETE FROM user_trusted_devices WHERE user_id = ?');
+                        if ($d instanceof mysqli_stmt) {
+                            $d->bind_param('i', $userId);
+                            $d->execute();
+                            $d->close();
+                        }
+                    }
+                    setcookie('trusted_device', '', [
+                        'expires' => time() - 3600,
+                        'path' => '/',
+                        'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+                        'httponly' => true,
+                        'samesite' => 'Lax',
+                    ]);
+                    unset($_SESSION['pending_2fa_secret']);
+                    Flash::set('success', 'Two-factor authentication disabled.');
+                    Response::redirect('settings.php');
+                }
+            }
+            $errors['general'] = 'Failed to disable 2FA.';
+        }
+    }
+
+    if ($action === 'revoke_trusted_devices') {
+        if (!$hasUserTrustedDevicesTable) {
+            $errors['general'] = 'Trusted devices are unavailable. Database table missing.';
+        } else {
+            $stmt = $conn->prepare('DELETE FROM user_trusted_devices WHERE user_id = ?');
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $userId);
+                $ok = $stmt->execute();
+                $stmt->close();
+                if ($ok) {
+                    setcookie('trusted_device', '', [
+                        'expires' => time() - 3600,
+                        'path' => '/',
+                        'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+                        'httponly' => true,
+                        'samesite' => 'Lax',
+                    ]);
+                    Flash::set('success', 'Trusted devices revoked. You will be asked for a code again on next login.');
+                    Response::redirect('settings.php');
+                }
+            }
+            $errors['general'] = 'Failed to revoke trusted devices.';
+        }
+    }
 }
 
 include __DIR__ . '/partials/page_start.php';
@@ -469,6 +619,81 @@ include __DIR__ . '/partials/sidebar.php';
                             </div>
                         </form>
                     </div>
+
+                    <?php if (($user['role'] ?? '') === 'guest'): ?>
+                        <div class="bg-white rounded-xl border border-gray-100 p-6">
+                            <div class="flex items-start justify-between mb-4">
+                                <div>
+                                    <h3 class="text-lg font-medium text-gray-900">Two-Factor Authentication</h3>
+                                    <p class="text-xs text-gray-500 mt-1">Use an authenticator app to protect your guest account</p>
+                                </div>
+                            </div>
+
+                            <?php if (!$hasUser2faTable): ?>
+                                <div class="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-900">
+                                    2FA is unavailable. Database table is missing.
+                                </div>
+                            <?php else: ?>
+                                <?php
+                                    $twofaEnabled = $twofa && (int)($twofa['enabled'] ?? 0) === 1;
+                                    $pendingSecret = (string)($_SESSION['pending_2fa_secret'] ?? '');
+                                    $issuer = 'Hotel System';
+                                    $acct = (string)($user['username'] ?? 'guest');
+                                    $otpauth = $pendingSecret !== '' ? Totp::buildOtpAuthUri($acct, $issuer, $pendingSecret, 6, 30) : '';
+                                ?>
+
+                                <?php if ($twofaEnabled): ?>
+                                    <div class="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                                        2FA is enabled.
+                                    </div>
+                                    <div class="mt-4 flex flex-col md:flex-row gap-3">
+                                        <form method="post">
+                                            <input type="hidden" name="action" value="disable_2fa" />
+                                            <button class="px-4 py-2 rounded-lg border border-red-200 text-red-700 text-sm hover:bg-red-50 transition">Disable 2FA</button>
+                                        </form>
+                                        <form method="post">
+                                            <input type="hidden" name="action" value="revoke_trusted_devices" />
+                                            <button class="px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm hover:bg-gray-50 transition">Revoke trusted devices (<?= (int)$trustedDevicesCount ?>)</button>
+                                        </form>
+                                    </div>
+                                <?php elseif ($pendingSecret !== ''): ?>
+                                    <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-800">
+                                        Add this secret to Google Authenticator, then enter the 6-digit code to confirm.
+                                    </div>
+                                    <div class="mt-4 grid grid-cols-1 gap-3">
+                                        <div class="rounded-lg border border-gray-100 p-4">
+                                            <div class="text-xs text-gray-500">Secret</div>
+                                            <div class="mt-2 font-mono text-sm text-gray-900 break-all"><?= htmlspecialchars($pendingSecret) ?></div>
+                                        </div>
+                                        <div class="rounded-lg border border-gray-100 p-4">
+                                            <div class="text-xs text-gray-500">Authenticator URI</div>
+                                            <div class="mt-2 font-mono text-xs text-gray-700 break-all"><?= htmlspecialchars($otpauth) ?></div>
+                                        </div>
+                                    </div>
+
+                                    <form method="post" class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                                        <input type="hidden" name="action" value="confirm_2fa_setup" />
+                                        <div class="md:col-span-2">
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">6-digit code</label>
+                                            <input name="code" inputmode="numeric" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                                            <?php if (isset($errors['twofa_code'])): ?>
+                                                <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['twofa_code']) ?></div>
+                                            <?php endif; ?>
+                                        </div>
+                                        <button class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 transition">Confirm 2FA</button>
+                                    </form>
+                                <?php else: ?>
+                                    <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-800">
+                                        Turn on 2FA to require a code from your authenticator app at login. You can trust your device for 7 days.
+                                    </div>
+                                    <form method="post" class="mt-4">
+                                        <input type="hidden" name="action" value="start_2fa_setup" />
+                                        <button class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 transition">Enable 2FA</button>
+                                    </form>
+                                <?php endif; ?>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
         <?php endif; ?>
