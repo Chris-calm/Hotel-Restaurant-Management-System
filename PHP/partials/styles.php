@@ -107,14 +107,22 @@
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: #fff;
         text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
     }
 
     .profile-dropdown .profile-header img {
-        width: 60px;
-        height: 60px;
+        width: 64px;
+        height: 64px;
         border-radius: 50%;
-        border: 3px solid #fff;
-        margin-bottom: 10px;
+        border: 3px solid rgba(255, 255, 255, 0.95);
+        background: rgba(255, 255, 255, 0.25);
+        object-fit: cover;
+        object-position: center;
+        display: block;
+        margin: 0 auto 10px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.18);
     }
 
     .profile-dropdown .profile-header .name {
