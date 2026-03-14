@@ -226,6 +226,28 @@ if (Request::isPost()) {
         $status = (string)Request::post('status', '');
         $ok = $maintenanceService->updateTicketStatus($ticketId, $status, $errors);
         if ($ok) {
+            if (in_array($status, ['Resolved', 'Closed', 'Cancelled'], true)) {
+                try {
+                    $notifRepo = new NotificationRepository($conn);
+                    $ticket = (new MaintenanceRepository($conn))->findTicketById($ticketId);
+                    $target = '';
+                    if ($ticket) {
+                        $roomNo = trim((string)($ticket['room_no'] ?? ''));
+                        $frName = trim((string)($ticket['function_room_name'] ?? ''));
+                        if ($frName !== '') {
+                            $target = 'Function Room ' . $frName;
+                        } elseif ($roomNo !== '') {
+                            $target = 'Room ' . $roomNo;
+                        }
+                    }
+                    $title = 'Maintenance ' . $status;
+                    $msg = ($target !== '' ? ($target . ' • ') : '') . 'Ticket updated to ' . $status . '.';
+                    $url = '/PHP/modules/housekeeping_maintenance.php?tab=maintenance';
+                    $notifRepo->createForStaff($title, $msg, $url);
+                } catch (Throwable $e) {
+                }
+            }
+
             Flash::set('success', 'Ticket updated.');
             Response::redirect('housekeeping_maintenance.php?tab=maintenance');
         }

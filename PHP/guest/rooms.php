@@ -41,7 +41,7 @@ $availableRooms = [];
 if ($conn) {
     $roomRepo = new RoomRepository($conn);
     $maintenanceService = new MaintenanceService(new MaintenanceRepository($conn), $roomRepo);
-    $service = new ReservationService(new ReservationRepository($conn), new HousekeepingRepository($conn), $roomRepo, $maintenanceService);
+    $service = new ReservationService(new ReservationRepository($conn), new HousekeepingRepository($conn), $roomRepo, $maintenanceService, new NotificationRepository($conn));
 
     $rtRepo = new RoomTypeRepository($conn);
     $rtSvc = new RoomTypeService($rtRepo);

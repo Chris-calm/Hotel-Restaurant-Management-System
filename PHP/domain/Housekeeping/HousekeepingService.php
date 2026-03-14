@@ -112,7 +112,7 @@ final class HousekeepingService
 
         $createdBy = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
 
-        return $this->repo->createTask([
+        $id = $this->repo->createTask([
             'room_id' => null,
             'function_room_id' => $functionRoomId,
             'task_type' => $taskType,
@@ -126,6 +126,12 @@ final class HousekeepingService
             'source_id' => $data['source_id'] ?? null,
             'notes' => (string)($data['notes'] ?? ''),
         ]);
+
+        if ($id > 0) {
+            $this->repo->updateFunctionRoomStatus($functionRoomId, 'Cleaning');
+        }
+
+        return $id;
     }
 
     public function setTaskStatus(int $taskId, string $status, array &$errors): bool
@@ -147,6 +153,18 @@ final class HousekeepingService
         if (!$ok) {
             $errors['general'] = 'Failed to update task.';
             return false;
+        }
+
+        $functionRoomId = (int)($task['function_room_id'] ?? 0);
+        if ($functionRoomId > 0) {
+            if ($status === 'In Progress') {
+                $this->repo->updateFunctionRoomStatus($functionRoomId, 'Cleaning');
+            }
+            if ($status === 'Done') {
+                if (!$this->repo->hasOpenMaintenanceForFunctionRoom($functionRoomId)) {
+                    $this->repo->updateFunctionRoomStatus($functionRoomId, 'Available');
+                }
+            }
         }
 
         if ($status === 'Done') {

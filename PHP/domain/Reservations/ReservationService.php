@@ -6,6 +6,7 @@ require_once __DIR__ . '/../Housekeeping/HousekeepingRepository.php';
 require_once __DIR__ . '/../Rooms/RoomRepository.php';
 require_once __DIR__ . '/../Maintenance/MaintenanceService.php';
 require_once __DIR__ . '/../Maintenance/MaintenanceRepository.php';
+require_once __DIR__ . '/../Notifications/NotificationRepository.php';
 
 final class ReservationService
 {
@@ -13,18 +14,21 @@ final class ReservationService
     private ?HousekeepingRepository $housekeepingRepo;
     private ?RoomRepository $roomRepo;
     private ?MaintenanceService $maintenanceService;
+    private ?NotificationRepository $notifRepo;
 
     public function __construct(
         ReservationRepository $repo,
         ?HousekeepingRepository $housekeepingRepo = null,
         ?RoomRepository $roomRepo = null,
-        ?MaintenanceService $maintenanceService = null
+        ?MaintenanceService $maintenanceService = null,
+        ?NotificationRepository $notifRepo = null
     )
     {
         $this->repo = $repo;
         $this->housekeepingRepo = $housekeepingRepo;
         $this->roomRepo = $roomRepo;
         $this->maintenanceService = $maintenanceService;
+        $this->notifRepo = $notifRepo;
     }
 
     public static function allowedSources(): array
@@ -188,6 +192,36 @@ final class ReservationService
         $ok = $this->repo->updateReservationStatus($reservationId, $newStatus, $deposit, $paymentMethod);
         if (!$ok) {
             return false;
+        }
+
+        if ($this->notifRepo && in_array($newStatus, ['Confirmed', 'Checked In', 'Completed', 'Cancelled', 'No Show'], true)) {
+            try {
+                $ref = trim((string)($current['reference_no'] ?? ''));
+                $roomNo = trim((string)($current['room_no'] ?? ''));
+                $guestName = trim((string)($current['first_name'] ?? '') . ' ' . (string)($current['last_name'] ?? ''));
+
+                $title = 'Reservation ' . $newStatus;
+                $msgParts = [];
+                if ($ref !== '') {
+                    $msgParts[] = $ref;
+                }
+                if ($guestName !== '') {
+                    $msgParts[] = $guestName;
+                }
+                if ($roomNo !== '') {
+                    $msgParts[] = 'Room ' . $roomNo;
+                }
+                $msg = implode(' • ', $msgParts);
+                if ($msg === '') {
+                    $msg = 'Reservation updated to ' . $newStatus . '.';
+                } else {
+                    $msg .= ' → ' . $newStatus . '.';
+                }
+
+                $url = '/PHP/modules/reservations_view.php?id=' . (int)$reservationId;
+                $this->notifRepo->createForStaff($title, $msg, $url);
+            } catch (Throwable $e) {
+            }
         }
 
         if ($newStatus === 'Checked In') {

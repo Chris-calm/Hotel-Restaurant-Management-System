@@ -7,10 +7,40 @@ final class MaintenanceRepository
     private ?mysqli $conn;
     private ?bool $hasRoomImageColumn = null;
     private ?bool $hasRoomTypeImageColumn = null;
+    private ?bool $hasHousekeepingFunctionRoomColumn = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasHousekeepingFunctionRoomColumn(): bool
+    {
+        if ($this->hasHousekeepingFunctionRoomColumn !== null) {
+            return $this->hasHousekeepingFunctionRoomColumn;
+        }
+        if (!$this->conn) {
+            $this->hasHousekeepingFunctionRoomColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasHousekeepingFunctionRoomColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'housekeeping_tasks'
+               AND COLUMN_NAME = 'function_room_id'"
+        );
+        $this->hasHousekeepingFunctionRoomColumn = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+        return $this->hasHousekeepingFunctionRoomColumn;
     }
 
     private function hasRoomImageColumn(): bool
@@ -386,6 +416,52 @@ final class MaintenanceRepository
         $id = $ok ? (int)$stmt->insert_id : 0;
         $stmt->close();
         return $id;
+    }
+
+    public function updateFunctionRoomStatus(int $functionRoomId, string $status): bool
+    {
+        if (!$this->conn) {
+            return false;
+        }
+        if ($functionRoomId <= 0) {
+            return false;
+        }
+        $stmt = $this->conn->prepare('UPDATE function_rooms SET status = ? WHERE id = ?');
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('si', $status, $functionRoomId);
+        $ok = $stmt->execute();
+        $stmt->close();
+        return $ok;
+    }
+
+    public function hasOpenHousekeepingForFunctionRoom(int $functionRoomId): bool
+    {
+        if (!$this->conn) {
+            return false;
+        }
+        if ($functionRoomId <= 0) {
+            return false;
+        }
+        if (!$this->hasHousekeepingFunctionRoomColumn()) {
+            return false;
+        }
+
+        $stmt = $this->conn->prepare(
+            "SELECT COUNT(*) AS c
+             FROM housekeeping_tasks
+             WHERE function_room_id = ?
+               AND status IN ('Open','In Progress')"
+        );
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('i', $functionRoomId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return ((int)($row['c'] ?? 0)) > 0;
     }
 
     public function updateTicket(int $id, array $data): bool

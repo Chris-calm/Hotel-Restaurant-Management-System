@@ -14,7 +14,8 @@ $service = new ReservationService(
     new ReservationRepository($conn),
     new HousekeepingRepository($conn),
     $roomRepo,
-    $maintenanceService
+    $maintenanceService,
+    new NotificationRepository($conn)
 );
 
 $APP_BASE_URL = App::baseUrl();

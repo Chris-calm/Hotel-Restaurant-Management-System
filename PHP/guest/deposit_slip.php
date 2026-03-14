@@ -27,7 +27,8 @@ if ($conn) {
         new ReservationRepository($conn),
         new HousekeepingRepository($conn),
         $roomRepo,
-        $maintenanceService
+        $maintenanceService,
+        new NotificationRepository($conn)
     );
     $reservation = $service->getReservationDetails($id);
 }

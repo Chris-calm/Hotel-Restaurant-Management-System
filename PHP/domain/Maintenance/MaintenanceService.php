@@ -115,6 +115,10 @@ final class MaintenanceService
             'room_out_of_order_from' => $roomOutOfOrderFrom,
         ]);
 
+        if ($id > 0 && $functionRoomId > 0) {
+            $this->repo->updateFunctionRoomStatus($functionRoomId, 'Maintenance');
+        }
+
         if ($id > 0 && $requiresDowntime && $roomId > 0) {
             $room = $this->roomRepo->findById($roomId);
             $oldStatus = (string)($room['status'] ?? '');
@@ -183,6 +187,17 @@ final class MaintenanceService
         if (!$ok) {
             $errors['general'] = 'Failed to update ticket.';
             return false;
+        }
+
+        $functionRoomId = (int)($ticket['function_room_id'] ?? 0);
+        if ($functionRoomId > 0) {
+            if (in_array($status, ['Resolved', 'Closed', 'Cancelled'], true)) {
+                if (!$this->repo->hasOpenHousekeepingForFunctionRoom($functionRoomId)) {
+                    $this->repo->updateFunctionRoomStatus($functionRoomId, 'Available');
+                }
+            } else {
+                $this->repo->updateFunctionRoomStatus($functionRoomId, 'Maintenance');
+            }
         }
 
         $actorId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;

@@ -21,7 +21,8 @@ $reservationService = new ReservationService(
     new ReservationRepository($conn),
     new HousekeepingRepository($conn),
     $roomRepo,
-    $maintenanceService
+    $maintenanceService,
+    new NotificationRepository($conn)
 );
 
 $pendingApprovals = [];

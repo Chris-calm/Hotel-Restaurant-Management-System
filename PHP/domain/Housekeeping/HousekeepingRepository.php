@@ -10,10 +10,40 @@ final class HousekeepingRepository
     private ?bool $hasFunctionRoomColumns = null;
     private ?bool $hasFunctionRoomImageColumn = null;
     private ?bool $hasTaskTimingColumns = null;
+    private ?bool $hasMaintenanceFunctionRoomColumn = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasMaintenanceFunctionRoomColumn(): bool
+    {
+        if ($this->hasMaintenanceFunctionRoomColumn !== null) {
+            return $this->hasMaintenanceFunctionRoomColumn;
+        }
+        if (!$this->conn) {
+            $this->hasMaintenanceFunctionRoomColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasMaintenanceFunctionRoomColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'maintenance_tickets'
+               AND COLUMN_NAME = 'function_room_id'"
+        );
+        $this->hasMaintenanceFunctionRoomColumn = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+        return $this->hasMaintenanceFunctionRoomColumn;
     }
 
     private function hasTaskTimingColumns(): bool
@@ -393,6 +423,62 @@ final class HousekeepingRepository
         $ok = $stmt->execute();
         $stmt->close();
         return $ok;
+    }
+
+    public function hasOpenTasksForFunctionRoom(int $functionRoomId): bool
+    {
+        if (!$this->conn) {
+            return false;
+        }
+        if ($functionRoomId <= 0) {
+            return false;
+        }
+        if (!$this->hasFunctionRoomColumns()) {
+            return false;
+        }
+
+        $stmt = $this->conn->prepare(
+            "SELECT COUNT(*) AS c
+             FROM housekeeping_tasks
+             WHERE function_room_id = ?
+               AND status IN ('Open','In Progress')"
+        );
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('i', $functionRoomId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return ((int)($row['c'] ?? 0)) > 0;
+    }
+
+    public function hasOpenMaintenanceForFunctionRoom(int $functionRoomId): bool
+    {
+        if (!$this->conn) {
+            return false;
+        }
+        if ($functionRoomId <= 0) {
+            return false;
+        }
+        if (!$this->hasMaintenanceFunctionRoomColumn()) {
+            return false;
+        }
+
+        $stmt = $this->conn->prepare(
+            "SELECT COUNT(*) AS c
+             FROM maintenance_tickets
+             WHERE function_room_id = ?
+               AND status IN ('Open','Assigned','In Progress','On Hold')"
+        );
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('i', $functionRoomId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return ((int)($row['c'] ?? 0)) > 0;
     }
 
     public function updateTaskStatus(int $taskId, string $status): bool

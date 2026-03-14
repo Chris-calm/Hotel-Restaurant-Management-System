@@ -63,7 +63,7 @@ if ($conn && $currentUserId > 0) {
             $stmt = $conn->prepare(
                 "SELECT id, title, message, url, is_read, created_at
                  FROM notifications
-                 WHERE user_id = ?
+                 WHERE user_id = ? AND is_read = 0
                  ORDER BY id DESC
                  LIMIT 12"
             );
@@ -222,4 +222,40 @@ $currentUri = (string)($_SERVER['REQUEST_URI'] ?? '');
     profileDropdown.addEventListener('click', function(e) {
         e.stopPropagation();
     });
+
+    (function () {
+        var items = document.querySelectorAll('#notificationDropdown .notification-item');
+        if (!items.length) return;
+
+        function decCounters() {
+            var num = document.querySelector('#notificationBtn .num');
+            var headerCount = document.querySelector('#notificationDropdown .header span:last-child');
+            if (num) {
+                var n = parseInt(num.textContent || '0', 10);
+                if (isFinite(n) && n > 0) {
+                    num.textContent = String(n - 1);
+                }
+            }
+            if (headerCount) {
+                var n2 = parseInt(headerCount.textContent || '0', 10);
+                if (isFinite(n2) && n2 > 0) {
+                    headerCount.textContent = String(n2 - 1);
+                }
+            }
+        }
+
+        items.forEach(function (a) {
+            a.addEventListener('click', function () {
+                if (a.dataset.reading === '1') return;
+                a.dataset.reading = '1';
+                a.style.opacity = '0.5';
+                decCounters();
+                window.setTimeout(function () {
+                    if (a && a.parentNode) {
+                        a.parentNode.removeChild(a);
+                    }
+                }, 50);
+            });
+        });
+    })();
 </script>
