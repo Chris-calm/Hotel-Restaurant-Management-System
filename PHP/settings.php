@@ -16,6 +16,7 @@ $root = dirname(__DIR__);
 $user = null;
 $hasUsers = false;
 $guestLoyalty = null;
+$hasGuestProfilePicture = false;
 
 if ($conn) {
     try {
@@ -46,6 +47,19 @@ if ($conn && $hasUsers && $userId > 0) {
             $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
             $db = $conn->real_escape_string($db);
             if ($db !== '') {
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME = 'profile_picture_path'");
+                $hasGuestProfilePicture = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            }
+        } catch (Throwable $e) {
+        }
+    }
+
+    if ($guestId > 0) {
+        try {
+            $dbRow = $conn->query('SELECT DATABASE()');
+            $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+            $db = $conn->real_escape_string($db);
+            if ($db !== '') {
                 $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME IN ('loyalty_points','loyalty_tier')");
                 $hasCols = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
                 if ($hasCols === 2) {
@@ -60,6 +74,30 @@ if ($conn && $hasUsers && $userId > 0) {
             }
         } catch (Throwable $e) {
         }
+    }
+}
+
+if ($conn && $hasUsers && $userId > 0 && $guestId > 0 && $hasGuestProfilePicture && $user) {
+    $uPic = trim((string)($user['profile_picture'] ?? ''));
+    try {
+        $gStmt = $conn->prepare('SELECT profile_picture_path FROM guests WHERE id = ? LIMIT 1');
+        if ($gStmt instanceof mysqli_stmt) {
+            $gStmt->bind_param('i', $guestId);
+            $gStmt->execute();
+            $row = $gStmt->get_result()->fetch_assoc() ?: null;
+            $gStmt->close();
+
+            $gPic = trim((string)($row['profile_picture_path'] ?? ''));
+            if ($uPic !== '' && $gPic === '') {
+                $up = $conn->prepare('UPDATE guests SET profile_picture_path = ? WHERE id = ?');
+                if ($up instanceof mysqli_stmt) {
+                    $up->bind_param('si', $uPic, $guestId);
+                    $up->execute();
+                    $up->close();
+                }
+            }
+        }
+    } catch (Throwable $e) {
     }
 }
 
@@ -114,6 +152,17 @@ if (Request::isPost() && $conn && $hasUsers && $userId > 0) {
             $ok = $stmt->execute();
             $stmt->close();
             if ($ok) {
+                if ($guestId > 0 && $hasGuestProfilePicture) {
+                    try {
+                        $gStmt = $conn->prepare('UPDATE guests SET profile_picture_path = NULL WHERE id = ?');
+                        if ($gStmt instanceof mysqli_stmt) {
+                            $gStmt->bind_param('i', $guestId);
+                            $gStmt->execute();
+                            $gStmt->close();
+                        }
+                    } catch (Throwable $e) {
+                    }
+                }
                 Flash::set('success', 'Profile picture removed.');
                 Response::redirect('settings.php');
             }
@@ -160,6 +209,17 @@ if (Request::isPost() && $conn && $hasUsers && $userId > 0) {
                                 $ok = $stmt->execute();
                                 $stmt->close();
                                 if ($ok) {
+                                    if ($guestId > 0 && $hasGuestProfilePicture) {
+                                        try {
+                                            $gStmt = $conn->prepare('UPDATE guests SET profile_picture_path = ? WHERE id = ?');
+                                            if ($gStmt instanceof mysqli_stmt) {
+                                                $gStmt->bind_param('si', $path, $guestId);
+                                                $gStmt->execute();
+                                                $gStmt->close();
+                                            }
+                                        } catch (Throwable $e) {
+                                        }
+                                    }
                                     Flash::set('success', 'Profile picture updated.');
                                     Response::redirect('settings.php');
                                 }

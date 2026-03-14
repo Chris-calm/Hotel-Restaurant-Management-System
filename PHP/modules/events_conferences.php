@@ -3,6 +3,9 @@ require_once __DIR__ . '/../rbac_middleware.php';
 RBACMiddleware::checkPageAccess();
 
 require_once __DIR__ . '/../core/bootstrap.php';
+require_once __DIR__ . '/../domain/Rooms/RoomRepository.php';
+require_once __DIR__ . '/../domain/Housekeeping/HousekeepingRepository.php';
+require_once __DIR__ . '/../domain/Housekeeping/HousekeepingService.php';
 
 $conn = Database::getConnection();
 
@@ -417,7 +420,7 @@ if (Request::isPost() && $conn) {
             [$tierAuto, $rateAuto] = $computeRoomTierAndRate($capacity);
             $rate = (string)$rateAuto;
         }
-        if (!in_array($status, ['Available', 'Maintenance'], true)) {
+        if (!in_array($status, ['Available', 'Cleaning', 'Inspection', 'Maintenance'], true)) {
             $errors['status'] = 'Status is invalid.';
         }
 
@@ -462,6 +465,23 @@ if (Request::isPost() && $conn) {
 
         if ($roomId <= 0) {
             $errors['general'] = 'Invalid function room.';
+        }
+
+        if (empty($errors) && $conn && $roomId > 0) {
+            try {
+                $stLock = $conn->prepare('SELECT status FROM function_rooms WHERE id = ? LIMIT 1');
+                if ($stLock instanceof mysqli_stmt) {
+                    $stLock->bind_param('i', $roomId);
+                    $stLock->execute();
+                    $row = $stLock->get_result()->fetch_assoc();
+                    $stLock->close();
+                    $curStatus = (string)($row['status'] ?? '');
+                    if (in_array($curStatus, ['Cleaning', 'Inspection', 'Maintenance'], true)) {
+                        $errors['general'] = 'Function room cannot be edited while it is in ' . $curStatus . ' status.';
+                    }
+                }
+            } catch (Throwable $e) {
+            }
         }
 
         $existingRoomImagePath = '';
@@ -527,7 +547,7 @@ if (Request::isPost() && $conn) {
         if ($rateRaw === '' || !is_numeric($rate) || (float)$rate < 0) {
             $errors['base_rate'] = 'Base rate is invalid.';
         }
-        if (!in_array($status, ['Available', 'Maintenance'], true)) {
+        if (!in_array($status, ['Available', 'Cleaning', 'Inspection', 'Maintenance'], true)) {
             $errors['status'] = 'Status is invalid.';
         }
 
@@ -567,6 +587,23 @@ if (Request::isPost() && $conn) {
         if ($roomId <= 0) {
             $errors['general'] = 'Invalid function room.';
         } else {
+            if ($conn && $roomId > 0) {
+                try {
+                    $stLock = $conn->prepare('SELECT status FROM function_rooms WHERE id = ? LIMIT 1');
+                    if ($stLock instanceof mysqli_stmt) {
+                        $stLock->bind_param('i', $roomId);
+                        $stLock->execute();
+                        $row = $stLock->get_result()->fetch_assoc();
+                        $stLock->close();
+                        $curStatus = (string)($row['status'] ?? '');
+                        if (in_array($curStatus, ['Cleaning', 'Inspection', 'Maintenance'], true)) {
+                            $errors['general'] = 'Function room cannot be deleted while it is in ' . $curStatus . ' status.';
+                        }
+                    }
+                } catch (Throwable $e) {
+                }
+            }
+
             $inUse = false;
             if ($hasEvents) {
                 $stmt = $conn->prepare('SELECT COUNT(*) AS c FROM events WHERE function_room_id = ?');
@@ -578,9 +615,9 @@ if (Request::isPost() && $conn) {
                     $inUse = ((int)($row['c'] ?? 0) > 0);
                 }
             }
-            if ($inUse) {
+            if (empty($errors) && $inUse) {
                 $errors['general'] = 'Cannot delete function room because it has events assigned.';
-            } else {
+            } elseif (empty($errors)) {
                 $stmt = $conn->prepare('DELETE FROM function_rooms WHERE id = ? LIMIT 1');
                 if ($stmt instanceof mysqli_stmt) {
                     $stmt->bind_param('i', $roomId);
@@ -754,6 +791,20 @@ if (Request::isPost() && $conn) {
             }
         }
 
+        if (empty($errors) && $functionRoomId > 0) {
+            $stmt = $conn->prepare('SELECT status FROM function_rooms WHERE id = ? LIMIT 1');
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $functionRoomId);
+                $stmt->execute();
+                $fr = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $frStatus = (string)($fr['status'] ?? '');
+                if (in_array($frStatus, ['Cleaning', 'Inspection', 'Maintenance'], true)) {
+                    $errors['function_room_id'] = 'Selected function room is locked (' . $frStatus . ').';
+                }
+            }
+        }
+
         if (!is_numeric($estimatedTotal) || (float)$estimatedTotal < 0) {
             $errors['estimated_total'] = 'Estimated total is invalid.';
         }
@@ -870,6 +921,38 @@ if (Request::isPost() && $conn) {
 
         if ($eventId <= 0) {
             $errors['general'] = 'Invalid event.';
+        }
+
+        $prevFunctionRoomId = 0;
+        $prevStatus = '';
+        $prevDate = '';
+        $prevEnd = '';
+        if (empty($errors) && $conn) {
+            $stmt = $conn->prepare('SELECT function_room_id, status, event_date, end_time FROM events WHERE id = ? LIMIT 1');
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $eventId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $prevFunctionRoomId = (int)($row['function_room_id'] ?? 0);
+                $prevStatus = (string)($row['status'] ?? '');
+                $prevDate = (string)($row['event_date'] ?? '');
+                $prevEnd = (string)($row['end_time'] ?? '');
+            }
+
+            if ($prevFunctionRoomId > 0) {
+                $stmt = $conn->prepare('SELECT status FROM function_rooms WHERE id = ? LIMIT 1');
+                if ($stmt instanceof mysqli_stmt) {
+                    $stmt->bind_param('i', $prevFunctionRoomId);
+                    $stmt->execute();
+                    $fr = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    $frStatus = (string)($fr['status'] ?? '');
+                    if (in_array($frStatus, ['Cleaning', 'Inspection', 'Maintenance'], true)) {
+                        $errors['general'] = 'Event cannot be edited while its function room is ' . $frStatus . '.';
+                    }
+                }
+            }
         }
 
         $existingEventImagePath = '';
@@ -1078,6 +1161,49 @@ if (Request::isPost() && $conn) {
                     $ok = $stmt->execute();
                     $stmt->close();
                     if ($ok) {
+                        if ($prevStatus !== 'Completed' && $status === 'Completed') {
+                            $frId = $functionRoomId > 0 ? $functionRoomId : $prevFunctionRoomId;
+                            $d = trim($eventDate !== '' ? $eventDate : $prevDate);
+                            $et = trim($endTime !== '' ? $endTime : $prevEnd);
+                            if ($frId > 0 && $d !== '') {
+                                $et = $et !== '' ? $et : '23:59:59';
+                                $scheduledFrom = date('Y-m-d H:i:s', strtotime($d . ' ' . $et));
+                                $scheduledTo = date('Y-m-d H:i:s', strtotime($scheduledFrom . ' +2 hours'));
+
+                                $roomRepo = new RoomRepository($conn);
+                                $hkRepo = new HousekeepingRepository($conn);
+                                $hkService = new HousekeepingService($hkRepo, $roomRepo);
+                                if ($hkRepo->supportsFunctionRoomsAndScheduling()) {
+                                    $already = $hkRepo->hasTaskForSource('Event', (int)$eventId);
+                                    if (!$already) {
+                                        $tmpErrors = [];
+                                        $hkService->createFunctionRoomCleanupTask([
+                                            'function_room_id' => $frId,
+                                            'task_type' => 'Cleaning',
+                                            'status' => 'Open',
+                                            'priority' => 'Normal',
+                                            'scheduled_from' => $scheduledFrom,
+                                            'scheduled_to' => $scheduledTo,
+                                            'source_type' => 'Event',
+                                            'source_id' => (int)$eventId,
+                                            'notes' => 'Auto-created after event completion.',
+                                        ], $tmpErrors);
+
+                                        $hkService->createFunctionRoomCleanupTask([
+                                            'function_room_id' => $frId,
+                                            'task_type' => 'Inspection',
+                                            'status' => 'Open',
+                                            'priority' => 'Normal',
+                                            'scheduled_from' => $scheduledTo,
+                                            'scheduled_to' => date('Y-m-d H:i:s', strtotime($scheduledTo . ' +1 hour')),
+                                            'source_type' => 'Event',
+                                            'source_id' => (int)$eventId,
+                                            'notes' => 'Auto-created after event completion.',
+                                        ], $tmpErrors);
+                                    }
+                                }
+                            }
+                        }
                         Flash::set('success', 'Event updated.');
                         Response::redirect('events_conferences.php');
                     }
@@ -1095,6 +1221,49 @@ if (Request::isPost() && $conn) {
                     $ok = $stmt->execute();
                     $stmt->close();
                     if ($ok) {
+                        if ($prevStatus !== 'Completed' && $status === 'Completed') {
+                            $frId = $functionRoomId > 0 ? $functionRoomId : $prevFunctionRoomId;
+                            $d = trim($eventDate !== '' ? $eventDate : $prevDate);
+                            $et = trim($endTime !== '' ? $endTime : $prevEnd);
+                            if ($frId > 0 && $d !== '') {
+                                $et = $et !== '' ? $et : '23:59:59';
+                                $scheduledFrom = date('Y-m-d H:i:s', strtotime($d . ' ' . $et));
+                                $scheduledTo = date('Y-m-d H:i:s', strtotime($scheduledFrom . ' +2 hours'));
+
+                                $roomRepo = new RoomRepository($conn);
+                                $hkRepo = new HousekeepingRepository($conn);
+                                $hkService = new HousekeepingService($hkRepo, $roomRepo);
+                                if ($hkRepo->supportsFunctionRoomsAndScheduling()) {
+                                    $already = $hkRepo->hasTaskForSource('Event', (int)$eventId);
+                                    if (!$already) {
+                                        $tmpErrors = [];
+                                        $hkService->createFunctionRoomCleanupTask([
+                                            'function_room_id' => $frId,
+                                            'task_type' => 'Cleaning',
+                                            'status' => 'Open',
+                                            'priority' => 'Normal',
+                                            'scheduled_from' => $scheduledFrom,
+                                            'scheduled_to' => $scheduledTo,
+                                            'source_type' => 'Event',
+                                            'source_id' => (int)$eventId,
+                                            'notes' => 'Auto-created after event completion.',
+                                        ], $tmpErrors);
+
+                                        $hkService->createFunctionRoomCleanupTask([
+                                            'function_room_id' => $frId,
+                                            'task_type' => 'Inspection',
+                                            'status' => 'Open',
+                                            'priority' => 'Normal',
+                                            'scheduled_from' => $scheduledTo,
+                                            'scheduled_to' => date('Y-m-d H:i:s', strtotime($scheduledTo . ' +1 hour')),
+                                            'source_type' => 'Event',
+                                            'source_id' => (int)$eventId,
+                                            'notes' => 'Auto-created after event completion.',
+                                        ], $tmpErrors);
+                                    }
+                                }
+                            }
+                        }
                         Flash::set('success', 'Event updated.');
                         Response::redirect('events_conferences.php');
                     }
@@ -1110,17 +1279,49 @@ if (Request::isPost() && $conn) {
         if ($eventId <= 0) {
             $errors['general'] = 'Invalid event.';
         } else {
-            $stmt = $conn->prepare('DELETE FROM events WHERE id = ? LIMIT 1');
-            if ($stmt instanceof mysqli_stmt) {
-                $stmt->bind_param('i', $eventId);
-                $ok = $stmt->execute();
-                $stmt->close();
-                if ($ok) {
-                    Flash::set('success', 'Event deleted.');
-                    Response::redirect('events_conferences.php');
+            $functionRoomId = 0;
+            try {
+                $stmt = $conn->prepare('SELECT function_room_id FROM events WHERE id = ? LIMIT 1');
+                if ($stmt instanceof mysqli_stmt) {
+                    $stmt->bind_param('i', $eventId);
+                    $stmt->execute();
+                    $row = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    $functionRoomId = (int)($row['function_room_id'] ?? 0);
+                }
+            } catch (Throwable $e) {
+            }
+
+            if ($functionRoomId > 0) {
+                try {
+                    $stmt = $conn->prepare('SELECT status FROM function_rooms WHERE id = ? LIMIT 1');
+                    if ($stmt instanceof mysqli_stmt) {
+                        $stmt->bind_param('i', $functionRoomId);
+                        $stmt->execute();
+                        $fr = $stmt->get_result()->fetch_assoc();
+                        $stmt->close();
+                        $frStatus = (string)($fr['status'] ?? '');
+                        if (in_array($frStatus, ['Cleaning', 'Inspection', 'Maintenance'], true)) {
+                            $errors['general'] = 'Event cannot be deleted while its function room is ' . $frStatus . '.';
+                        }
+                    }
+                } catch (Throwable $e) {
                 }
             }
-            $errors['general'] = 'Failed to delete event.';
+
+            if (empty($errors)) {
+                $stmt = $conn->prepare('DELETE FROM events WHERE id = ? LIMIT 1');
+                if ($stmt instanceof mysqli_stmt) {
+                    $stmt->bind_param('i', $eventId);
+                    $ok = $stmt->execute();
+                    $stmt->close();
+                    if ($ok) {
+                        Flash::set('success', 'Event deleted.');
+                        Response::redirect('events_conferences.php');
+                    }
+                }
+                $errors['general'] = 'Failed to delete event.';
+            }
         }
     }
 }
@@ -1543,6 +1744,8 @@ include __DIR__ . '/../partials/sidebar.php';
                         <select name="status" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
                             <?php $frStatus = (string)($editingFunctionRoom['status'] ?? 'Available'); ?>
                             <option value="Available" <?= $frStatus === 'Available' ? 'selected' : '' ?>>Available</option>
+                            <option value="Cleaning" <?= $frStatus === 'Cleaning' ? 'selected' : '' ?>>Cleaning</option>
+                            <option value="Inspection" <?= $frStatus === 'Inspection' ? 'selected' : '' ?>>Inspection</option>
                             <option value="Maintenance" <?= $frStatus === 'Maintenance' ? 'selected' : '' ?>>Maintenance</option>
                         </select>
                     </div>
@@ -1615,19 +1818,24 @@ include __DIR__ . '/../partials/sidebar.php';
                                             $baseStatus = (string)($fr['status'] ?? '');
                                             $activeEventStatus = (string)($fr['active_event_status'] ?? '');
                                             $displayStatus = $baseStatus;
-                                            if ($baseStatus !== 'Maintenance' && $activeEventStatus !== '') {
+                                            if (!in_array($baseStatus, ['Cleaning', 'Inspection', 'Maintenance'], true) && $activeEventStatus !== '') {
                                                 $displayStatus = $activeEventStatus;
                                             }
                                         ?>
                                         <td class="px-4 py-3 text-right text-gray-700"><?= htmlspecialchars($displayStatus) ?></td>
                                         <td class="px-4 py-3 text-right">
                                             <div class="flex items-center justify-end gap-2">
-                                                <a class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition" href="events_conferences.php?edit_room_id=<?= (int)($fr['id'] ?? 0) ?>">Edit</a>
-                                                <form method="post" class="js-confirm-delete" data-confirm-title="Delete Function Room" data-confirm-message="Delete this function room?">
-                                                    <input type="hidden" name="action" value="delete_function_room" />
-                                                    <input type="hidden" name="id" value="<?= (int)($fr['id'] ?? 0) ?>" />
-                                                    <button class="px-3 py-1.5 rounded-lg border border-red-200 text-xs text-red-700 hover:bg-red-50 transition">Delete</button>
-                                                </form>
+                                                <?php $lockActions = in_array($displayStatus, ['Cleaning', 'Inspection', 'Maintenance'], true); ?>
+                                                <?php if (!$lockActions): ?>
+                                                    <a class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition" href="events_conferences.php?edit_room_id=<?= (int)($fr['id'] ?? 0) ?>">Edit</a>
+                                                    <form method="post" class="js-confirm-delete" data-confirm-title="Delete Function Room" data-confirm-message="Delete this function room?">
+                                                        <input type="hidden" name="action" value="delete_function_room" />
+                                                        <input type="hidden" name="id" value="<?= (int)($fr['id'] ?? 0) ?>" />
+                                                        <button class="px-3 py-1.5 rounded-lg border border-red-200 text-xs text-red-700 hover:bg-red-50 transition">Delete</button>
+                                                    </form>
+                                                <?php else: ?>
+                                                    <span class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500">Locked</span>
+                                                <?php endif; ?>
                                             </div>
                                         </td>
                                     </tr>
@@ -1803,7 +2011,7 @@ include __DIR__ . '/../partials/sidebar.php';
                             $res = $conn->query(
                                 "SELECT e.id, e.event_no, e.title, {$eventImageSelect}, e.client_name, e.client_phone, e.client_email, e.event_date, e.start_time, e.end_time,
                                         e.expected_guests, e.deposit_amount, e.status, e.estimated_total, e.notes,
-                                        fr.name AS function_room_name, {$functionRoomImageSelect}
+                                        fr.name AS function_room_name, fr.status AS function_room_status, {$functionRoomImageSelect}
                                  FROM events e
                                  LEFT JOIN function_rooms fr ON fr.id = e.function_room_id
                                  ORDER BY e.id DESC
@@ -1880,12 +2088,17 @@ include __DIR__ . '/../partials/sidebar.php';
                                             <td class="px-4 py-3 text-right text-gray-700"><?= htmlspecialchars((string)($e['status'] ?? '')) ?></td>
                                             <td class="px-4 py-3 text-right">
                                                 <div class="flex items-center justify-end gap-2">
-                                                    <a class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition" href="events_conferences.php?edit_event_id=<?= (int)($e['id'] ?? 0) ?>">Edit</a>
-                                                    <form method="post" class="js-confirm-delete" data-confirm-title="Delete Event" data-confirm-message="Delete this event?">
-                                                        <input type="hidden" name="action" value="delete_event" />
-                                                        <input type="hidden" name="id" value="<?= (int)($e['id'] ?? 0) ?>" />
-                                                        <button class="px-3 py-1.5 rounded-lg border border-red-200 text-xs text-red-700 hover:bg-red-50 transition">Delete</button>
-                                                    </form>
+                                                    <?php $evLock = in_array((string)($e['function_room_status'] ?? ''), ['Cleaning', 'Inspection', 'Maintenance'], true); ?>
+                                                    <?php if (!$evLock): ?>
+                                                        <a class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition" href="events_conferences.php?edit_event_id=<?= (int)($e['id'] ?? 0) ?>">Edit</a>
+                                                        <form method="post" class="js-confirm-delete" data-confirm-title="Delete Event" data-confirm-message="Delete this event?">
+                                                            <input type="hidden" name="action" value="delete_event" />
+                                                            <input type="hidden" name="id" value="<?= (int)($e['id'] ?? 0) ?>" />
+                                                            <button class="px-3 py-1.5 rounded-lg border border-red-200 text-xs text-red-700 hover:bg-red-50 transition">Delete</button>
+                                                        </form>
+                                                    <?php else: ?>
+                                                        <span class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500">Locked</span>
+                                                    <?php endif; ?>
                                                 </div>
                                             </td>
                                         </tr>

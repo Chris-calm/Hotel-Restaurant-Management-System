@@ -135,6 +135,69 @@ final class HousekeepingRepository
         return $this->hasFunctionRoomColumns;
     }
 
+    public function supportsFunctionRoomsAndScheduling(): bool
+    {
+        return $this->hasFunctionRoomColumns();
+    }
+
+    public function hasTaskForSource(string $sourceType, int $sourceId): bool
+    {
+        if (!$this->conn) {
+            return false;
+        }
+        if (!$this->hasFunctionRoomColumns()) {
+            return false;
+        }
+
+        $sourceType = trim($sourceType);
+        if ($sourceType === '' || $sourceId <= 0) {
+            return false;
+        }
+
+        $stmt = $this->conn->prepare(
+            "SELECT COUNT(*) AS c
+             FROM housekeeping_tasks
+             WHERE source_type = ? AND source_id = ?"
+        );
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('si', $sourceType, $sourceId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return ((int)($row['c'] ?? 0)) > 0;
+    }
+
+    public function hasOpenInspectionForFunctionRoom(int $functionRoomId): bool
+    {
+        if (!$this->conn) {
+            return false;
+        }
+        if ($functionRoomId <= 0) {
+            return false;
+        }
+        if (!$this->hasFunctionRoomColumns()) {
+            return false;
+        }
+
+        $stmt = $this->conn->prepare(
+            "SELECT COUNT(*) AS c
+             FROM housekeeping_tasks
+             WHERE function_room_id = ?
+               AND task_type = 'Inspection'
+               AND status IN ('Open','In Progress')"
+        );
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('i', $functionRoomId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return ((int)($row['c'] ?? 0)) > 0;
+    }
+
     private function hasRoomImageColumn(): bool
     {
         if ($this->hasRoomImageColumn !== null) {

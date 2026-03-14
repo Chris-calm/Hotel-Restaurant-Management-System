@@ -24,7 +24,13 @@ if ($conn && $currentUserId > 0) {
 
             $pp = trim((string)($row['profile_picture'] ?? ''));
             if ($pp !== '') {
-                $currentUserProfilePic = (substr($pp, 0, 1) === '/') ? ($APP_BASE_URL . $pp) : $pp;
+                if (preg_match('/^https?:\/\//i', $pp)) {
+                    $currentUserProfilePic = $pp;
+                } elseif (substr($pp, 0, 1) === '/') {
+                    $currentUserProfilePic = $APP_BASE_URL . $pp;
+                } else {
+                    $currentUserProfilePic = $APP_BASE_URL . '/' . $pp;
+                }
             }
         }
     } catch (Throwable $e) {

@@ -10,6 +10,7 @@ require_once __DIR__ . '/../domain/Reservations/ReservationService.php';
 require_once __DIR__ . '/../domain/Rooms/RoomRepository.php';
 require_once __DIR__ . '/../domain/Notifications/NotificationRepository.php';
 require_once __DIR__ . '/../domain/Housekeeping/HousekeepingRepository.php';
+require_once __DIR__ . '/../domain/Housekeeping/HousekeepingService.php';
 
 $conn = Database::getConnection();
 
@@ -336,44 +337,6 @@ if (Request::isPost()) {
                 $ok = $stmt->execute();
                 $stmt->close();
                 if ($ok) {
-                    if ($newStatus === 'Confirmed') {
-                        $frId = (int)($ev['function_room_id'] ?? 0);
-                        $eventDate = trim((string)($ev['event_date'] ?? ''));
-                        $endTime = trim((string)($ev['end_time'] ?? ''));
-                        if ($frId > 0 && $eventDate !== '' && $endTime !== '') {
-                            $scheduledFrom = date('Y-m-d H:i:s', strtotime($eventDate . ' ' . $endTime));
-                            $scheduledTo = date('Y-m-d H:i:s', strtotime($eventDate . ' ' . $endTime . ' +2 hours'));
-
-                            $already = false;
-                            $chk = $conn->prepare("SELECT id FROM housekeeping_tasks WHERE source_type = 'Event' AND source_id = ? LIMIT 1");
-                            if ($chk instanceof mysqli_stmt) {
-                                $chk->bind_param('i', $eventIdPost);
-                                $chk->execute();
-                                $row = $chk->get_result()->fetch_assoc();
-                                $chk->close();
-                                $already = !empty($row);
-                            }
-
-                            if (!$already) {
-                                $hkRepo = new HousekeepingRepository($conn);
-                                $hkRepo->createTask([
-                                    'room_id' => null,
-                                    'function_room_id' => $frId,
-                                    'task_type' => 'Cleaning',
-                                    'status' => 'Open',
-                                    'priority' => 'Normal',
-                                    'assigned_to' => null,
-                                    'created_by' => isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null,
-                                    'scheduled_from' => $scheduledFrom,
-                                    'scheduled_to' => $scheduledTo,
-                                    'source_type' => 'Event',
-                                    'source_id' => $eventIdPost,
-                                    'notes' => 'Auto-created after event confirmation.',
-                                ]);
-                            }
-                        }
-                    }
-
                     $notifyUserId = 0;
                     if ($eventsHasClientUserId) {
                         $notifyUserId = (int)($ev['client_user_id'] ?? 0);

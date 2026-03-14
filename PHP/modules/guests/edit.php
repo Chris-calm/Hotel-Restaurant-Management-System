@@ -21,6 +21,7 @@ $data = [
     'last_name' => (string)($guest['last_name'] ?? ''),
     'email' => (string)($guest['email'] ?? ''),
     'phone' => (string)($guest['phone'] ?? ''),
+    'profile_picture_path' => (string)($guest['profile_picture_path'] ?? ''),
     'id_type' => (string)($guest['id_type'] ?? ''),
     'id_number' => (string)($guest['id_number'] ?? ''),
     'id_photo_path' => (string)($guest['id_photo_path'] ?? ''),
@@ -36,6 +37,7 @@ if (Request::isPost()) {
     $data['last_name'] = (string)Request::post('last_name', '');
     $data['email'] = (string)Request::post('email', '');
     $data['phone'] = (string)Request::post('phone', '');
+    $data['profile_picture_path'] = (string)Request::post('profile_picture_path', '');
     $data['id_type'] = (string)Request::post('id_type', '');
     $data['id_number'] = (string)Request::post('id_number', '');
     $data['id_photo_path'] = (string)Request::post('id_photo_path', '');
@@ -44,6 +46,48 @@ if (Request::isPost()) {
     $data['loyalty_tier'] = (string)Request::post('loyalty_tier', 'None');
     $data['loyalty_points'] = (string)Request::post('loyalty_points', '0');
     $data['status'] = (string)Request::post('status', 'Lead');
+
+    if (isset($_FILES['profile_picture']) && is_array($_FILES['profile_picture']) && (int)($_FILES['profile_picture']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+        $err = (int)($_FILES['profile_picture']['error'] ?? UPLOAD_ERR_OK);
+        if ($err !== UPLOAD_ERR_OK) {
+            $errors['profile_picture_path'] = 'Failed to upload profile picture.';
+        } else {
+            $tmp = (string)($_FILES['profile_picture']['tmp_name'] ?? '');
+            $orig = (string)($_FILES['profile_picture']['name'] ?? '');
+            $size = (int)($_FILES['profile_picture']['size'] ?? 0);
+
+            if ($size <= 0) {
+                $errors['profile_picture_path'] = 'Invalid profile picture file.';
+            } elseif ($size > (5 * 1024 * 1024)) {
+                $errors['profile_picture_path'] = 'Profile picture must be 5MB or less.';
+            } else {
+                $ext = strtolower((string)pathinfo($orig, PATHINFO_EXTENSION));
+                $allowed = ['jpg', 'jpeg', 'png', 'webp'];
+                if (!in_array($ext, $allowed, true)) {
+                    $errors['profile_picture_path'] = 'Profile picture must be JPG, PNG, or WEBP.';
+                } else {
+                    $root = dirname(__DIR__, 3);
+                    $uploadDir = $root . '/uploads/guests';
+                    if (!is_dir($uploadDir)) {
+                        @mkdir($uploadDir, 0775, true);
+                    }
+
+                    if (!is_dir($uploadDir) || !is_writable($uploadDir)) {
+                        $errors['profile_picture_path'] = 'Upload directory is not writable.';
+                    } else {
+                        $safeExt = ($ext === 'jpeg') ? 'jpg' : $ext;
+                        $filename = 'guest_pp_' . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $safeExt;
+                        $dest = $uploadDir . '/' . $filename;
+                        if (!move_uploaded_file($tmp, $dest)) {
+                            $errors['profile_picture_path'] = 'Failed to save uploaded profile picture.';
+                        } else {
+                            $data['profile_picture_path'] = '/uploads/guests/' . $filename;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if (isset($_FILES['id_photo']) && is_array($_FILES['id_photo']) && (int)($_FILES['id_photo']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
         $err = (int)($_FILES['id_photo']['error'] ?? UPLOAD_ERR_OK);
@@ -73,7 +117,8 @@ if (Request::isPost()) {
                     if (!is_dir($uploadDir) || !is_writable($uploadDir)) {
                         $errors['id_photo_path'] = 'Upload directory is not writable.';
                     } else {
-                        $filename = 'guest_' . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
+                        $safeExt = ($ext === 'jpeg') ? 'jpg' : $ext;
+                        $filename = 'guest_' . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $safeExt;
                         $dest = $uploadDir . '/' . $filename;
                         if (!move_uploaded_file($tmp, $dest)) {
                             $errors['id_photo_path'] = 'Failed to save uploaded ID photo.';
@@ -117,12 +162,12 @@ include __DIR__ . '/../../partials/sidebar.php';
                 <div class="lg:col-span-1">
                     <div class="rounded-2xl border border-gray-100 bg-gray-50 overflow-hidden">
                         <div class="p-4 border-b border-gray-100 bg-white">
-                            <div class="text-sm font-medium text-gray-900">ID Photo</div>
+                            <div class="text-sm font-medium text-gray-900">Profile Picture</div>
                             <div class="text-xs text-gray-500 mt-1">Upload a new photo or keep the existing path</div>
                         </div>
                         <div class="h-56 flex items-center justify-center">
-                            <img id="id_preview_img" src="" alt="" style="height:100%;width:100%;object-fit:cover;display:none;" />
-                            <div id="id_preview_empty" class="text-xs text-gray-400">Preview</div>
+                            <img id="pp_preview_img" src="" alt="" style="height:100%;width:100%;object-fit:cover;display:none;" />
+                            <div id="pp_preview_empty" class="text-xs text-gray-400">Preview</div>
                         </div>
                         <div class="p-4 bg-white border-t border-gray-100">
                             <div class="text-xs text-gray-500">Supported: JPG, PNG, WEBP (max 5MB)</div>
@@ -198,6 +243,19 @@ include __DIR__ . '/../../partials/sidebar.php';
                 </div>
 
                 <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Profile Picture Path (optional)</label>
+                    <input id="profile_picture_path" name="profile_picture_path" value="<?= htmlspecialchars($data['profile_picture_path']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                </div>
+
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Upload Profile Picture (optional)</label>
+                    <input id="profile_picture_file" type="file" name="profile_picture" accept="image/*" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                    <?php if (isset($errors['profile_picture_path'])): ?>
+                        <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['profile_picture_path']) ?></div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="md:col-span-2">
                     <label class="block text-sm font-medium text-gray-700 mb-1">ID Photo Path (optional)</label>
                     <input id="id_photo_path" name="id_photo_path" value="<?= htmlspecialchars($data['id_photo_path']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                 </div>
@@ -243,10 +301,10 @@ include __DIR__ . '/../../partials/sidebar.php';
             <script>
                 (function () {
                     const baseUrl = '<?= htmlspecialchars($APP_BASE_URL, ENT_QUOTES) ?>';
-                    const img = document.getElementById('id_preview_img');
-                    const empty = document.getElementById('id_preview_empty');
-                    const fileInput = document.getElementById('id_photo_file');
-                    const pathInput = document.getElementById('id_photo_path');
+                    const img = document.getElementById('pp_preview_img');
+                    const empty = document.getElementById('pp_preview_empty');
+                    const fileInput = document.getElementById('profile_picture_file');
+                    const pathInput = document.getElementById('profile_picture_path');
 
                     function setPreview(src) {
                         if (!img || !empty) return;

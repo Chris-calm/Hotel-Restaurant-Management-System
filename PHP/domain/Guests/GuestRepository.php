@@ -8,10 +8,39 @@ final class GuestRepository
     private ?bool $hasIdentityColumns = null;
     private ?bool $hasPreferencesNotesColumns = null;
     private ?bool $hasLoyaltyColumns = null;
+    private ?bool $hasProfilePictureColumn = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasProfilePictureColumn(): bool
+    {
+        if ($this->hasProfilePictureColumn !== null) {
+            return $this->hasProfilePictureColumn;
+        }
+        if (!$this->conn) {
+            $this->hasProfilePictureColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasProfilePictureColumn = false;
+            return false;
+        }
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'guests'
+               AND COLUMN_NAME = 'profile_picture_path'"
+        );
+        $this->hasProfilePictureColumn = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+        return $this->hasProfilePictureColumn;
     }
 
     private function hasPreferencesNotesColumns(): bool
@@ -112,6 +141,7 @@ final class GuestRepository
 
         $q = trim($q);
         if ($q === '') {
+            $ppSelect = $this->hasProfilePictureColumn() ? 'profile_picture_path,' : 'NULL AS profile_picture_path,';
             $idSelect = $this->hasIdentityColumns()
                 ? 'id_type, id_number, id_photo_path,'
                 : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
@@ -123,6 +153,7 @@ final class GuestRepository
                 : 'NULL AS loyalty_tier, 0 AS loyalty_points,';
 
             $sql = "SELECT id, first_name, last_name, email, phone,
+                           {$ppSelect}
                            {$idSelect}
                            {$prefsSelect}
                            {$loyaltySelect}
@@ -141,6 +172,7 @@ final class GuestRepository
         }
 
         $like = '%' . $q . '%';
+        $ppSelect = $this->hasProfilePictureColumn() ? 'profile_picture_path,' : 'NULL AS profile_picture_path,';
         $idSelect = $this->hasIdentityColumns()
             ? 'id_type, id_number, id_photo_path,'
             : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
@@ -154,6 +186,7 @@ final class GuestRepository
         if ($this->hasIdentityColumns()) {
             $stmt = $this->conn->prepare(
                 "SELECT id, first_name, last_name, email, phone,
+                        {$ppSelect}
                         {$idSelect}
                         {$prefsSelect}
                         {$loyaltySelect}
@@ -165,6 +198,7 @@ final class GuestRepository
         } else {
             $stmt = $this->conn->prepare(
                 "SELECT id, first_name, last_name, email, phone,
+                        {$ppSelect}
                         {$idSelect}
                         {$prefsSelect}
                         {$loyaltySelect}
@@ -198,6 +232,7 @@ final class GuestRepository
             return null;
         }
 
+        $ppSelect = $this->hasProfilePictureColumn() ? 'profile_picture_path,' : 'NULL AS profile_picture_path,';
         $idSelect = $this->hasIdentityColumns()
             ? 'id_type, id_number, id_photo_path,'
             : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
@@ -210,6 +245,7 @@ final class GuestRepository
 
         $stmt = $this->conn->prepare(
             "SELECT id, first_name, last_name, email, phone,
+                    {$ppSelect}
                     {$idSelect}
                     {$prefsSelect}
                     {$loyaltySelect}
@@ -234,112 +270,77 @@ final class GuestRepository
         }
 
         $hasId = $this->hasIdentityColumns();
+        $hasPp = $this->hasProfilePictureColumn();
         $hasPrefs = $this->hasPreferencesNotesColumns();
         $hasLoyalty = $this->hasLoyaltyColumns();
 
-        if ($hasId && $hasPrefs && $hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "INSERT INTO guests (first_name, last_name, email, phone, id_type, id_number, id_photo_path, preferences, notes, loyalty_tier, loyalty_points, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            );
-        } elseif ($hasId && $hasPrefs && !$hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "INSERT INTO guests (first_name, last_name, email, phone, id_type, id_number, id_photo_path, preferences, notes, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            );
-        } elseif ($hasId && !$hasPrefs && $hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "INSERT INTO guests (first_name, last_name, email, phone, id_type, id_number, id_photo_path, loyalty_tier, loyalty_points, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            );
-        } elseif ($hasId && !$hasPrefs && !$hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "INSERT INTO guests (first_name, last_name, email, phone, id_type, id_number, id_photo_path, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-            );
-        } elseif (!$hasId && $hasPrefs && $hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "INSERT INTO guests (first_name, last_name, email, phone, preferences, notes, loyalty_tier, loyalty_points, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            );
-        } elseif (!$hasId && $hasPrefs && !$hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "INSERT INTO guests (first_name, last_name, email, phone, preferences, notes, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)"
-            );
-        } elseif (!$hasId && !$hasPrefs && $hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "INSERT INTO guests (first_name, last_name, email, phone, loyalty_tier, loyalty_points, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)"
-            );
-        } else {
-            $stmt = $this->conn->prepare(
-                "INSERT INTO guests (first_name, last_name, email, phone, status)
-                 VALUES (?, ?, ?, ?, ?)"
-            );
+        $cols = ['first_name', 'last_name', 'email', 'phone'];
+        $types = 'ssss';
+        $params = [
+            (string)($data['first_name'] ?? ''),
+            (string)($data['last_name'] ?? ''),
+            (string)($data['email'] ?? ''),
+            (string)($data['phone'] ?? ''),
+        ];
+
+        if ($hasPp) {
+            $cols[] = 'profile_picture_path';
+            $types .= 's';
+            $pp = trim((string)($data['profile_picture_path'] ?? ''));
+            $params[] = ($pp === '') ? null : $pp;
         }
+        if ($hasId) {
+            $cols[] = 'id_type';
+            $cols[] = 'id_number';
+            $cols[] = 'id_photo_path';
+            $types .= 'sss';
+            $idType = trim((string)($data['id_type'] ?? ''));
+            $idNo = trim((string)($data['id_number'] ?? ''));
+            $idPhoto = trim((string)($data['id_photo_path'] ?? ''));
+            $params[] = ($idType === '') ? null : $idType;
+            $params[] = ($idNo === '') ? null : $idNo;
+            $params[] = ($idPhoto === '') ? null : $idPhoto;
+        }
+        if ($hasPrefs) {
+            $cols[] = 'preferences';
+            $cols[] = 'notes';
+            $types .= 'ss';
+            $prefs = trim((string)($data['preferences'] ?? ''));
+            $notes = trim((string)($data['notes'] ?? ''));
+            $params[] = ($prefs === '') ? null : $prefs;
+            $params[] = ($notes === '') ? null : $notes;
+        }
+        if ($hasLoyalty) {
+            $cols[] = 'loyalty_tier';
+            $cols[] = 'loyalty_points';
+            $types .= 'si';
+            $tier = trim((string)($data['loyalty_tier'] ?? ''));
+            $params[] = ($tier === '' || $tier === 'None') ? null : $tier;
+            $params[] = is_numeric((string)($data['loyalty_points'] ?? '')) ? (int)$data['loyalty_points'] : 0;
+        }
+
+        $cols[] = 'status';
+        $types .= 's';
+        $params[] = (string)($data['status'] ?? 'Lead');
+
+        $placeholders = implode(',', array_fill(0, count($cols), '?'));
+        $sql = 'INSERT INTO guests (' . implode(',', $cols) . ') VALUES (' . $placeholders . ')';
+        $stmt = $this->conn->prepare($sql);
         if (!$stmt) {
             return 0;
         }
 
-        $first = (string)($data['first_name'] ?? '');
-        $last = (string)($data['last_name'] ?? '');
-        $email = (string)($data['email'] ?? '');
-        $phone = (string)($data['phone'] ?? '');
-        $idType = (string)($data['id_type'] ?? '');
-        $idNumber = (string)($data['id_number'] ?? '');
-        $idPhotoPath = (string)($data['id_photo_path'] ?? '');
-        $preferences = (string)($data['preferences'] ?? '');
-        $notes = (string)($data['notes'] ?? '');
-        $tier = (string)($data['loyalty_tier'] ?? '');
-        $points = is_numeric((string)($data['loyalty_points'] ?? '')) ? (int)$data['loyalty_points'] : 0;
-        $status = (string)($data['status'] ?? 'Lead');
+        $bind = [];
+        $bind[] = $types;
+        foreach ($params as $k => $v) {
+            $bind[] = &$params[$k];
+        }
+        call_user_func_array([$stmt, 'bind_param'], $bind);
 
-        if (trim($idType) === '') {
-            $idType = null;
-        }
-        if (trim($idNumber) === '') {
-            $idNumber = null;
-        }
-        if (trim($idPhotoPath) === '') {
-            $idPhotoPath = null;
-        }
-
-        if (trim($preferences) === '') {
-            $preferences = null;
-        }
-        if (trim($notes) === '') {
-            $notes = null;
-        }
-        if (trim($tier) === '' || $tier === 'None') {
-            $tier = null;
-        }
-
-        $hasId = $this->hasIdentityColumns();
-        $hasPrefs = $this->hasPreferencesNotesColumns();
-        $hasLoyalty = $this->hasLoyaltyColumns();
-
-        if ($hasId && $hasPrefs && $hasLoyalty) {
-            $stmt->bind_param('sssssssssiis', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $preferences, $notes, $tier, $points, $status);
-        } elseif ($hasId && $hasPrefs && !$hasLoyalty) {
-            $stmt->bind_param('ssssssssss', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $preferences, $notes, $status);
-        } elseif ($hasId && !$hasPrefs && $hasLoyalty) {
-            $stmt->bind_param('ssssssssis', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $tier, $points, $status);
-        } elseif ($hasId && !$hasPrefs && !$hasLoyalty) {
-            $stmt->bind_param('ssssssss', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $status);
-        } elseif (!$hasId && $hasPrefs && $hasLoyalty) {
-            $stmt->bind_param('sssssssis', $first, $last, $email, $phone, $preferences, $notes, $tier, $points, $status);
-        } elseif (!$hasId && $hasPrefs && !$hasLoyalty) {
-            $stmt->bind_param('sssssss', $first, $last, $email, $phone, $preferences, $notes, $status);
-        } elseif (!$hasId && !$hasPrefs && $hasLoyalty) {
-            $stmt->bind_param('sssssis', $first, $last, $email, $phone, $tier, $points, $status);
-        } else {
-            $stmt->bind_param('sssss', $first, $last, $email, $phone, $status);
-        }
         $ok = $stmt->execute();
-        $id = $ok ? (int)$stmt->insert_id : 0;
+        $newId = $ok ? (int)$stmt->insert_id : 0;
         $stmt->close();
-        return $id;
+        return $newId;
     }
 
     public function update(int $id, array $data): bool
@@ -349,130 +350,78 @@ final class GuestRepository
         }
 
         $hasId = $this->hasIdentityColumns();
+        $hasPp = $this->hasProfilePictureColumn();
         $hasPrefs = $this->hasPreferencesNotesColumns();
         $hasLoyalty = $this->hasLoyaltyColumns();
 
-        if ($hasId && $hasPrefs && $hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "UPDATE guests
-                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
-                     id_type = ?, id_number = ?, id_photo_path = ?,
-                     preferences = ?, notes = ?, loyalty_tier = ?, loyalty_points = ?,
-                     status = ?
-                 WHERE id = ?"
-            );
-        } elseif ($hasId && $hasPrefs && !$hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "UPDATE guests
-                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
-                     id_type = ?, id_number = ?, id_photo_path = ?,
-                     preferences = ?, notes = ?,
-                     status = ?
-                 WHERE id = ?"
-            );
-        } elseif ($hasId && !$hasPrefs && $hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "UPDATE guests
-                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
-                     id_type = ?, id_number = ?, id_photo_path = ?,
-                     loyalty_tier = ?, loyalty_points = ?,
-                     status = ?
-                 WHERE id = ?"
-            );
-        } elseif ($hasId && !$hasPrefs && !$hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "UPDATE guests
-                 SET first_name = ?, last_name = ?, email = ?, phone = ?, id_type = ?, id_number = ?, id_photo_path = ?, status = ?
-                 WHERE id = ?"
-            );
-        } elseif (!$hasId && $hasPrefs && $hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "UPDATE guests
-                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
-                     preferences = ?, notes = ?, loyalty_tier = ?, loyalty_points = ?,
-                     status = ?
-                 WHERE id = ?"
-            );
-        } elseif (!$hasId && $hasPrefs && !$hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "UPDATE guests
-                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
-                     preferences = ?, notes = ?,
-                     status = ?
-                 WHERE id = ?"
-            );
-        } elseif (!$hasId && !$hasPrefs && $hasLoyalty) {
-            $stmt = $this->conn->prepare(
-                "UPDATE guests
-                 SET first_name = ?, last_name = ?, email = ?, phone = ?,
-                     loyalty_tier = ?, loyalty_points = ?,
-                     status = ?
-                 WHERE id = ?"
-            );
-        } else {
-            $stmt = $this->conn->prepare(
-                "UPDATE guests
-                 SET first_name = ?, last_name = ?, email = ?, phone = ?, status = ?
-                 WHERE id = ?"
-            );
+        $sets = ['first_name = ?', 'last_name = ?', 'email = ?', 'phone = ?'];
+        $types = 'ssss';
+        $params = [
+            (string)($data['first_name'] ?? ''),
+            (string)($data['last_name'] ?? ''),
+            (string)($data['email'] ?? ''),
+            (string)($data['phone'] ?? ''),
+        ];
+
+        if ($hasPp) {
+            $sets[] = 'profile_picture_path = ?';
+            $types .= 's';
+            $pp = trim((string)($data['profile_picture_path'] ?? ''));
+            $params[] = ($pp === '') ? null : $pp;
         }
+        if ($hasId) {
+            $sets[] = 'id_type = ?';
+            $sets[] = 'id_number = ?';
+            $sets[] = 'id_photo_path = ?';
+            $types .= 'sss';
+            $idType = trim((string)($data['id_type'] ?? ''));
+            $idNo = trim((string)($data['id_number'] ?? ''));
+            $idPhoto = trim((string)($data['id_photo_path'] ?? ''));
+            $params[] = ($idType === '') ? null : $idType;
+            $params[] = ($idNo === '') ? null : $idNo;
+            $params[] = ($idPhoto === '') ? null : $idPhoto;
+        }
+        if ($hasPrefs) {
+            $sets[] = 'preferences = ?';
+            $sets[] = 'notes = ?';
+            $types .= 'ss';
+            $prefs = trim((string)($data['preferences'] ?? ''));
+            $notes = trim((string)($data['notes'] ?? ''));
+            $params[] = ($prefs === '') ? null : $prefs;
+            $params[] = ($notes === '') ? null : $notes;
+        }
+        if ($hasLoyalty) {
+            $sets[] = 'loyalty_tier = ?';
+            $sets[] = 'loyalty_points = ?';
+            $types .= 'si';
+            $tier = trim((string)($data['loyalty_tier'] ?? ''));
+            $params[] = ($tier === '' || $tier === 'None') ? null : $tier;
+            $params[] = is_numeric((string)($data['loyalty_points'] ?? '')) ? (int)$data['loyalty_points'] : 0;
+        }
+
+        $sets[] = 'status = ?';
+        $types .= 's';
+        $params[] = (string)($data['status'] ?? 'Lead');
+
+        $types .= 'i';
+        $params[] = $id;
+
+        $sql = 'UPDATE guests SET ' . implode(', ', $sets) . ' WHERE id = ?';
+        $stmt = $this->conn->prepare($sql);
         if (!$stmt) {
             return false;
         }
 
-        $first = (string)($data['first_name'] ?? '');
-        $last = (string)($data['last_name'] ?? '');
-        $email = (string)($data['email'] ?? '');
-        $phone = (string)($data['phone'] ?? '');
-        $idType = (string)($data['id_type'] ?? '');
-        $idNumber = (string)($data['id_number'] ?? '');
-        $idPhotoPath = (string)($data['id_photo_path'] ?? '');
-        $preferences = (string)($data['preferences'] ?? '');
-        $notes = (string)($data['notes'] ?? '');
-        $tier = (string)($data['loyalty_tier'] ?? '');
-        $points = is_numeric((string)($data['loyalty_points'] ?? '')) ? (int)$data['loyalty_points'] : 0;
-        $status = (string)($data['status'] ?? 'Lead');
+        $bind = [];
+        $bind[] = $types;
+        foreach ($params as $k => $v) {
+            $bind[] = &$params[$k];
+        }
+        call_user_func_array([$stmt, 'bind_param'], $bind);
 
-        if (trim($idType) === '') {
-            $idType = null;
-        }
-        if (trim($idNumber) === '') {
-            $idNumber = null;
-        }
-        if (trim($idPhotoPath) === '') {
-            $idPhotoPath = null;
-        }
-
-        if (trim($preferences) === '') {
-            $preferences = null;
-        }
-        if (trim($notes) === '') {
-            $notes = null;
-        }
-        if (trim($tier) === '' || $tier === 'None') {
-            $tier = null;
-        }
-
-        if ($hasId && $hasPrefs && $hasLoyalty) {
-            $stmt->bind_param('ssssssssssisi', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $preferences, $notes, $tier, $points, $status, $id);
-        } elseif ($hasId && $hasPrefs && !$hasLoyalty) {
-            $stmt->bind_param('ssssssssssi', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $preferences, $notes, $status, $id);
-        } elseif ($hasId && !$hasPrefs && $hasLoyalty) {
-            $stmt->bind_param('ssssssssisi', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $tier, $points, $status, $id);
-        } elseif ($hasId && !$hasPrefs && !$hasLoyalty) {
-            $stmt->bind_param('ssssssssi', $first, $last, $email, $phone, $idType, $idNumber, $idPhotoPath, $status, $id);
-        } elseif (!$hasId && $hasPrefs && $hasLoyalty) {
-            $stmt->bind_param('sssssssisi', $first, $last, $email, $phone, $preferences, $notes, $tier, $points, $status, $id);
-        } elseif (!$hasId && $hasPrefs && !$hasLoyalty) {
-            $stmt->bind_param('sssssssi', $first, $last, $email, $phone, $preferences, $notes, $status, $id);
-        } elseif (!$hasId && !$hasPrefs && $hasLoyalty) {
-            $stmt->bind_param('sssssisi', $first, $last, $email, $phone, $tier, $points, $status, $id);
-        } else {
-            $stmt->bind_param('sssssi', $first, $last, $email, $phone, $status, $id);
-        }
         $ok = $stmt->execute();
         $stmt->close();
-        return $ok;
+        return (bool)$ok;
     }
 
     public function delete(int $id): bool

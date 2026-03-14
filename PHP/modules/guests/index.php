@@ -66,6 +66,7 @@ include __DIR__ . '/../../partials/sidebar.php';
                         }
                         $name = trim((string)($g['first_name'] ?? '') . ' ' . (string)($g['last_name'] ?? ''));
 
+                        $pp = trim((string)($g['profile_picture_path'] ?? ''));
                         $idPhoto = trim((string)($g['id_photo_path'] ?? ''));
                         $tier = trim((string)($g['loyalty_tier'] ?? ''));
                         if ($tier === '') {
@@ -73,13 +74,14 @@ include __DIR__ . '/../../partials/sidebar.php';
                         }
                         $points = (int)($g['loyalty_points'] ?? 0);
                         $avatarSrc = '';
-                        if ($idPhoto !== '') {
-                            if (preg_match('/^https?:\/\//i', $idPhoto)) {
-                                $avatarSrc = $idPhoto;
-                            } elseif (substr($idPhoto, 0, 1) === '/') {
-                                $avatarSrc = $APP_BASE_URL . $idPhoto;
+                        $imgRaw = $pp !== '' ? $pp : $idPhoto;
+                        if ($imgRaw !== '') {
+                            if (preg_match('/^https?:\/\//i', $imgRaw)) {
+                                $avatarSrc = $imgRaw;
+                            } elseif (substr($imgRaw, 0, 1) === '/') {
+                                $avatarSrc = $APP_BASE_URL . $imgRaw;
                             } else {
-                                $avatarSrc = $APP_BASE_URL . '/' . $idPhoto;
+                                $avatarSrc = $APP_BASE_URL . '/' . $imgRaw;
                             }
                         }
                         $initials = '';

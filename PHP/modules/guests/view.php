@@ -68,9 +68,49 @@ include __DIR__ . '/../../partials/sidebar.php';
 
         <div class="bg-white rounded-xl border border-gray-100 p-6">
             <div class="flex items-start justify-between gap-4 mb-5">
-                <div>
-                    <div class="text-xs text-gray-500">Guest</div>
-                    <div class="text-lg font-semibold text-gray-900 mt-1"><?= htmlspecialchars(($guest['first_name'] ?? '') . ' ' . ($guest['last_name'] ?? '')) ?></div>
+                <?php
+                    $name = trim((string)($guest['first_name'] ?? '') . ' ' . (string)($guest['last_name'] ?? ''));
+                    $pp = trim((string)($guest['profile_picture_path'] ?? ''));
+                    $idPhoto = trim((string)($guest['id_photo_path'] ?? ''));
+                    $imgRaw = $pp !== '' ? $pp : $idPhoto;
+                    $avatarSrc = '';
+                    if ($imgRaw !== '') {
+                        if (preg_match('/^https?:\/\//i', $imgRaw)) {
+                            $avatarSrc = $imgRaw;
+                        } elseif (substr($imgRaw, 0, 1) === '/') {
+                            $avatarSrc = $APP_BASE_URL . $imgRaw;
+                        } else {
+                            $avatarSrc = $APP_BASE_URL . '/' . $imgRaw;
+                        }
+                    }
+                    $initials = '';
+                    if ($name !== '') {
+                        $parts = preg_split('/\s+/', $name);
+                        if (is_array($parts) && isset($parts[0])) {
+                            $initials .= strtoupper(substr((string)$parts[0], 0, 1));
+                        }
+                        if (is_array($parts) && count($parts) > 1) {
+                            $initials .= strtoupper(substr((string)$parts[count($parts) - 1], 0, 1));
+                        }
+                    }
+                    if ($initials === '') {
+                        $initials = 'G';
+                    }
+                ?>
+                <div class="flex items-start gap-3">
+                    <div class="shrink-0">
+                        <?php if ($avatarSrc !== ''): ?>
+                            <img src="<?= htmlspecialchars($avatarSrc) ?>" alt="" class="w-12 h-12 rounded-full" style="object-fit:cover;" />
+                        <?php else: ?>
+                            <div class="w-12 h-12 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center text-sm font-semibold">
+                                <?= htmlspecialchars($initials) ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500">Guest</div>
+                        <div class="text-lg font-semibold text-gray-900 mt-1"><?= htmlspecialchars($name) ?></div>
+                    </div>
                 </div>
                 <div class="text-right">
                     <div class="text-xs text-gray-500">Status</div>

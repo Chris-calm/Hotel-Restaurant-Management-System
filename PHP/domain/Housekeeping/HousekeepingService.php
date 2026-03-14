@@ -162,7 +162,11 @@ final class HousekeepingService
             }
             if ($status === 'Done') {
                 if (!$this->repo->hasOpenMaintenanceForFunctionRoom($functionRoomId)) {
-                    $this->repo->updateFunctionRoomStatus($functionRoomId, 'Available');
+                    if ($this->repo->hasOpenInspectionForFunctionRoom($functionRoomId)) {
+                        $this->repo->updateFunctionRoomStatus($functionRoomId, 'Inspection');
+                    } else {
+                        $this->repo->updateFunctionRoomStatus($functionRoomId, 'Available');
+                    }
                 }
             }
         }

@@ -627,14 +627,6 @@ include __DIR__ . '/../partials/sidebar.php';
                                     <?php endif; ?>
 
                                     <div class="mt-4 flex items-center gap-2 flex-wrap">
-                                        <?php if ($taskStatus !== 'In Progress'): ?>
-                                            <form method="post">
-                                                <input type="hidden" name="action" value="set_task_status" />
-                                                <input type="hidden" name="task_id" value="<?= (int)$t['id'] ?>" />
-                                                <input type="hidden" name="status" value="In Progress" />
-                                                <button type="submit" data-task-id="<?= (int)$t['id'] ?>" class="js-start-task px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Start</button>
-                                            </form>
-                                        <?php endif; ?>
                                         <form method="post">
                                             <input type="hidden" name="action" value="set_task_status" />
                                             <input type="hidden" name="task_id" value="<?= (int)$t['id'] ?>" />
