@@ -152,14 +152,19 @@ CREATE TABLE IF NOT EXISTS reservation_rooms (
 
 CREATE TABLE IF NOT EXISTS housekeeping_tasks (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  room_id INT UNSIGNED NOT NULL,
+  room_id INT UNSIGNED NULL,
+  function_room_id INT UNSIGNED NULL,
   task_type ENUM('Cleaning','Inspection') NOT NULL DEFAULT 'Cleaning',
   status ENUM('Open','In Progress','Done') NOT NULL DEFAULT 'Open',
   priority ENUM('Low','Normal','High') NOT NULL DEFAULT 'Normal',
   assigned_to INT UNSIGNED NULL,
   created_by INT UNSIGNED NULL,
+  scheduled_from DATETIME NULL,
+  scheduled_to DATETIME NULL,
   started_at DATETIME NULL,
   completed_at DATETIME NULL,
+  source_type VARCHAR(20) NULL,
+  source_id INT UNSIGNED NULL,
   notes TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_housekeeping_room
@@ -208,6 +213,7 @@ CREATE TABLE IF NOT EXISTS maintenance_tickets (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   ticket_no VARCHAR(30) NOT NULL UNIQUE,
   room_id INT UNSIGNED NULL,
+  function_room_id INT UNSIGNED NULL,
   asset_id INT UNSIGNED NULL,
   category_id INT UNSIGNED NULL,
   priority ENUM('Low','Normal','High','Urgent') NOT NULL DEFAULT 'Normal',
@@ -218,6 +224,8 @@ CREATE TABLE IF NOT EXISTS maintenance_tickets (
   assigned_to INT UNSIGNED NULL,
   vendor_id INT UNSIGNED NULL,
   requires_downtime TINYINT(1) NOT NULL DEFAULT 0,
+  scheduled_from DATETIME NULL,
+  scheduled_to DATETIME NULL,
   room_out_of_order_from DATETIME NULL,
   room_out_of_order_to DATETIME NULL,
   opened_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -357,6 +365,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
   category_id INT UNSIGNED NOT NULL,
   name VARCHAR(120) NOT NULL,
   price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  image_path VARCHAR(255) NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   CONSTRAINT fk_menu_items_category
     FOREIGN KEY (category_id) REFERENCES menu_categories(id)
@@ -378,6 +387,20 @@ CREATE TABLE IF NOT EXISTS pos_order_items (
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS pos_order_stock_posts (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  pos_order_id INT UNSIGNED NOT NULL,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_pos_stock_post_order
+    FOREIGN KEY (pos_order_id) REFERENCES pos_orders(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_pos_stock_post_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  UNIQUE KEY uq_pos_stock_post_order (pos_order_id)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS inventory_categories (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(80) NOT NULL UNIQUE
@@ -395,6 +418,20 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   CONSTRAINT fk_inventory_items_category
     FOREIGN KEY (category_id) REFERENCES inventory_categories(id)
     ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS menu_item_ingredients (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  menu_item_id INT UNSIGNED NOT NULL,
+  inventory_item_id INT UNSIGNED NOT NULL,
+  qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  CONSTRAINT fk_menu_ing_menu_item
+    FOREIGN KEY (menu_item_id) REFERENCES menu_items(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_menu_ing_inventory_item
+    FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id)
+    ON UPDATE CASCADE ON DELETE RESTRICT,
+  UNIQUE KEY uq_menu_ing (menu_item_id, inventory_item_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS inventory_movements (
@@ -472,6 +509,60 @@ CREATE TABLE IF NOT EXISTS loyalty_transactions (
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS loyalty_earn_posts (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  source_type ENUM('POS','RES_PAYMENT') NOT NULL,
+  source_id INT UNSIGNED NOT NULL,
+  guest_id INT UNSIGNED NOT NULL,
+  points INT NOT NULL,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_loyalty_earn_post_guest
+    FOREIGN KEY (guest_id) REFERENCES guests(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_loyalty_earn_post_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  UNIQUE KEY uq_loyalty_earn_post (source_type, source_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS loyalty_redeem_posts (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  source_type ENUM('POS','RES_PAYMENT') NOT NULL,
+  source_id INT UNSIGNED NOT NULL,
+  guest_id INT UNSIGNED NOT NULL,
+  points INT NOT NULL,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_loyalty_redeem_post_guest
+    FOREIGN KEY (guest_id) REFERENCES guests(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_loyalty_redeem_post_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  UNIQUE KEY uq_loyalty_redeem_post (source_type, source_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS pos_order_loyalty_redemptions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  pos_order_id INT UNSIGNED NOT NULL,
+  guest_id INT UNSIGNED NOT NULL,
+  points_redeemed INT NOT NULL,
+  amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  created_by INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_pos_loy_red_order
+    FOREIGN KEY (pos_order_id) REFERENCES pos_orders(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_pos_loy_red_guest
+    FOREIGN KEY (guest_id) REFERENCES guests(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_pos_loy_red_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  UNIQUE KEY uq_pos_loy_red_order (pos_order_id)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id INT UNSIGNED NOT NULL,
@@ -502,6 +593,8 @@ CREATE TABLE IF NOT EXISTS events (
   event_no VARCHAR(30) NOT NULL UNIQUE,
   title VARCHAR(120) NOT NULL,
   image_path VARCHAR(255) NULL,
+  client_user_id INT UNSIGNED NULL,
+  client_guest_id INT UNSIGNED NULL,
   client_name VARCHAR(120) NOT NULL,
   client_phone VARCHAR(40) NULL,
   client_email VARCHAR(120) NULL,
@@ -516,7 +609,23 @@ CREATE TABLE IF NOT EXISTS events (
   notes TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_events_client_user
+    FOREIGN KEY (client_user_id) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_events_client_guest
+    FOREIGN KEY (client_guest_id) REFERENCES guests(id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
   CONSTRAINT fk_events_function_room
     FOREIGN KEY (function_room_id) REFERENCES function_rooms(id)
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;
+
+ALTER TABLE housekeeping_tasks
+  ADD CONSTRAINT fk_housekeeping_function_room
+    FOREIGN KEY (function_room_id) REFERENCES function_rooms(id)
+    ON UPDATE CASCADE ON DELETE SET NULL;
+
+ALTER TABLE maintenance_tickets
+  ADD CONSTRAINT fk_maint_ticket_function_room
+    FOREIGN KEY (function_room_id) REFERENCES function_rooms(id)
+    ON UPDATE CASCADE ON DELETE SET NULL;

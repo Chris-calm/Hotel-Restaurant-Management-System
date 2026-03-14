@@ -200,7 +200,6 @@ final class ReservationService
 
         if ($newStatus === 'Completed') {
             $this->autoCreateHousekeepingOnCheckout($reservationId);
-            $this->awardLoyaltyPointsOnCompletion($current);
         }
 
         return true;

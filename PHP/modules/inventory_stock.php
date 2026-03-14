@@ -10,6 +10,8 @@ $APP_BASE_URL = App::baseUrl();
 
 $errors = [];
 
+$q = trim((string)Request::get('q', ''));
+
 $hasCategories = false;
 $hasItems = false;
 $hasMovements = false;
@@ -204,16 +206,36 @@ if ($conn && $hasCategories) {
 }
 
 if ($conn && $hasItems) {
-    $res = $conn->query(
+    $sql =
         "SELECT i.id, i.category_id, c.name AS category_name, i.sku, i.name, i.unit, i.quantity, i.reorder_level, i.created_at
          FROM inventory_items i
-         LEFT JOIN inventory_categories c ON c.id = i.category_id
-         ORDER BY i.id DESC"
-    );
-    if ($res) {
+         LEFT JOIN inventory_categories c ON c.id = i.category_id";
+    $where = [];
+    $types = '';
+    $params = [];
+    if ($q !== '') {
+        $like = '%' . $q . '%';
+        $where[] = '(i.name LIKE ? OR i.sku LIKE ?)';
+        $types .= 'ss';
+        $params[] = $like;
+        $params[] = $like;
+    }
+    if (!empty($where)) {
+        $sql .= ' WHERE ' . implode(' AND ', $where);
+    }
+    $sql .= ' ORDER BY i.id DESC';
+
+    $stmt = $conn->prepare($sql);
+    if ($stmt instanceof mysqli_stmt) {
+        if ($types !== '') {
+            $stmt->bind_param($types, ...$params);
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
         while ($row = $res->fetch_assoc()) {
             $items[] = $row;
         }
+        $stmt->close();
     }
     $kpiItems = count($items);
     foreach ($items as $it) {
@@ -300,6 +322,21 @@ include __DIR__ . '/../partials/sidebar.php';
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-1">
+                <div class="mb-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-4">Create Category</h3>
+                    <form method="post" class="space-y-3">
+                        <input type="hidden" name="action" value="create_category" />
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                            <input name="name" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                            <?php if (isset($errors['name'])): ?>
+                                <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['name']) ?></div>
+                            <?php endif; ?>
+                        </div>
+                        <button class="w-full px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black transition">Save Category</button>
+                    </form>
+                </div>
+
                 <h3 class="text-lg font-medium text-gray-900 mb-4">Add Item</h3>
                 <form method="post" class="space-y-3">
                     <input type="hidden" name="action" value="create_item" />
@@ -335,14 +372,14 @@ include __DIR__ . '/../partials/sidebar.php';
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Starting Qty</label>
-                            <input name="quantity" value="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                            <input name="quantity" value="0" type="number" step="0.01" min="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                             <?php if (isset($errors['quantity'])): ?>
                                 <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['quantity']) ?></div>
                             <?php endif; ?>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Reorder Level</label>
-                            <input name="reorder_level" value="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                            <input name="reorder_level" value="0" type="number" step="0.01" min="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                             <?php if (isset($errors['reorder_level'])): ?>
                                 <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['reorder_level']) ?></div>
                             <?php endif; ?>
@@ -381,7 +418,7 @@ include __DIR__ . '/../partials/sidebar.php';
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Qty</label>
-                                <input name="qty" value="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                                <input name="qty" value="0" type="number" step="0.01" min="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                                 <?php if (isset($errors['qty'])): ?>
                                     <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['qty']) ?></div>
                                 <?php endif; ?>
@@ -400,7 +437,10 @@ include __DIR__ . '/../partials/sidebar.php';
             <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-2">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-lg font-medium text-gray-900">Stock Levels</h3>
-                    <div class="text-xs text-gray-500">All items</div>
+                    <form method="get" class="flex items-center gap-2">
+                        <input name="q" value="<?= htmlspecialchars($q) ?>" placeholder="Search name/SKU" class="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <button class="px-3 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black transition">Search</button>
+                    </form>
                 </div>
                 <?php if (empty($items)): ?>
                     <div class="text-sm text-gray-500">No inventory items yet.</div>
@@ -485,4 +525,4 @@ include __DIR__ . '/../partials/sidebar.php';
         </div>
     </main>
 </section>
-<?php include __DIR__ . '/../partials/page_end.php';
+<?php include __DIR__ . '/../partials/page_end.php'; ?>

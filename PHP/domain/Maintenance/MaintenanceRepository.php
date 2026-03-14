@@ -232,6 +232,8 @@ final class MaintenanceRepository
 
         $sql = "SELECT t.id, t.ticket_no, t.status, t.priority, t.title, t.requires_downtime,
                        t.room_id, r.room_no,
+                       t.function_room_id, fr.name AS function_room_name,
+                       t.scheduled_from, t.scheduled_to,
                        {$imgSelect}
                        {$rtImgSelect}
                        t.asset_id, a.asset_code,
@@ -242,6 +244,7 @@ final class MaintenanceRepository
                 FROM maintenance_tickets t
                 LEFT JOIN rooms r ON r.id = t.room_id
                 LEFT JOIN room_types rt ON rt.id = r.room_type_id
+                LEFT JOIN function_rooms fr ON fr.id = t.function_room_id
                 LEFT JOIN assets a ON a.id = t.asset_id
                 LEFT JOIN maintenance_categories c ON c.id = t.category_id
                 LEFT JOIN users u ON u.id = t.assigned_to
@@ -265,8 +268,9 @@ final class MaintenanceRepository
 
         if ($q !== '') {
             $like = '%' . $q . '%';
-            $sql .= " AND (t.ticket_no LIKE ? OR t.title LIKE ? OR r.room_no LIKE ? OR a.asset_code LIKE ?)";
-            $types .= 'ssss';
+            $sql .= " AND (t.ticket_no LIKE ? OR t.title LIKE ? OR r.room_no LIKE ? OR fr.name LIKE ? OR a.asset_code LIKE ?)";
+            $types .= 'sssss';
+            $params[] = $like;
             $params[] = $like;
             $params[] = $like;
             $params[] = $like;
@@ -334,8 +338,8 @@ final class MaintenanceRepository
 
         $stmt = $this->conn->prepare(
             "INSERT INTO maintenance_tickets
-                (ticket_no, room_id, asset_id, category_id, priority, status, title, description, reported_by, assigned_to, vendor_id, requires_downtime, room_out_of_order_from)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                (ticket_no, room_id, function_room_id, asset_id, category_id, priority, status, title, description, reported_by, assigned_to, vendor_id, requires_downtime, scheduled_from, scheduled_to, room_out_of_order_from)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
         if (!$stmt) {
             return 0;
@@ -343,6 +347,7 @@ final class MaintenanceRepository
 
         $ticketNo = (string)($data['ticket_no'] ?? '');
         $roomId = ($data['room_id'] ?? null);
+        $functionRoomId = ($data['function_room_id'] ?? null);
         $assetId = ($data['asset_id'] ?? null);
         $categoryId = ($data['category_id'] ?? null);
         $priority = (string)($data['priority'] ?? 'Normal');
@@ -353,12 +358,15 @@ final class MaintenanceRepository
         $assignedTo = ($data['assigned_to'] ?? null);
         $vendorId = ($data['vendor_id'] ?? null);
         $requiresDowntime = (int)($data['requires_downtime'] ?? 0);
+        $scheduledFrom = $data['scheduled_from'] ?? null;
+        $scheduledTo = $data['scheduled_to'] ?? null;
         $downtimeFrom = $data['room_out_of_order_from'] ?? null;
 
         $stmt->bind_param(
-            'siiissssiiiis',
+            'siiiissssiiiisss',
             $ticketNo,
             $roomId,
+            $functionRoomId,
             $assetId,
             $categoryId,
             $priority,
@@ -369,6 +377,8 @@ final class MaintenanceRepository
             $assignedTo,
             $vendorId,
             $requiresDowntime,
+            $scheduledFrom,
+            $scheduledTo,
             $downtimeFrom
         );
 

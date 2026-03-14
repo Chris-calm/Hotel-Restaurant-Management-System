@@ -72,6 +72,12 @@ if ($conn && $currentUserId > 0) {
                     <span class="text">My Reservations</span>
                 </a>
             </li>
+            <li <?= (strpos((string)($_SERVER['SCRIPT_NAME'] ?? ''), '/PHP/guest/events_conferences.php') !== false) ? 'class="active"' : '' ?>>
+                <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/guest/events_conferences.php">
+                    <i class='bx bxs-calendar-event'></i>
+                    <span class="text">Event &amp; Conference</span>
+                </a>
+            </li>
             <li <?= (basename($_SERVER['PHP_SELF']) === 'settings.php') ? 'class="active"' : '' ?>>
                 <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/settings.php">
                     <i class='bx bxs-cog'></i>

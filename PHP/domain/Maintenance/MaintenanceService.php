@@ -65,10 +65,11 @@ final class MaintenanceService
         $errors = [];
 
         $roomId = (int)($data['room_id'] ?? 0);
+        $functionRoomId = (int)($data['function_room_id'] ?? 0);
         $assetId = (int)($data['asset_id'] ?? 0);
 
-        if ($roomId <= 0 && $assetId <= 0) {
-            $errors['target'] = 'Select a room or an asset.';
+        if ($roomId <= 0 && $functionRoomId <= 0 && $assetId <= 0) {
+            $errors['target'] = 'Select a room, function room, or an asset.';
         }
 
         $priority = (string)($data['priority'] ?? 'Normal');
@@ -98,6 +99,7 @@ final class MaintenanceService
         $id = $this->repo->createTicket([
             'ticket_no' => $ticketNo,
             'room_id' => $roomId > 0 ? $roomId : null,
+            'function_room_id' => $functionRoomId > 0 ? $functionRoomId : null,
             'asset_id' => $assetId > 0 ? $assetId : null,
             'category_id' => ((int)($data['category_id'] ?? 0)) ?: null,
             'priority' => $priority,
@@ -108,6 +110,8 @@ final class MaintenanceService
             'assigned_to' => ((int)($data['assigned_to'] ?? 0)) ?: null,
             'vendor_id' => ((int)($data['vendor_id'] ?? 0)) ?: null,
             'requires_downtime' => $requiresDowntime ? 1 : 0,
+            'scheduled_from' => !empty($data['scheduled_from']) ? (string)$data['scheduled_from'] : null,
+            'scheduled_to' => !empty($data['scheduled_to']) ? (string)$data['scheduled_to'] : null,
             'room_out_of_order_from' => $roomOutOfOrderFrom,
         ]);
 

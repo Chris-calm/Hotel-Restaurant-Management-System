@@ -46,6 +46,19 @@ if ($conn) {
 
 $currentUserId = (int)($_SESSION['user_id'] ?? 0);
 
+$loyaltyTierForPoints = function (int $points): ?string {
+    if ($points >= 3000) {
+        return 'Platinum';
+    }
+    if ($points >= 1500) {
+        return 'Gold';
+    }
+    if ($points >= 500) {
+        return 'Silver';
+    }
+    return null;
+};
+
 $guestId = Request::int('get', 'guest_id', 0);
 $q = trim((string)Request::get('q', ''));
 
@@ -77,7 +90,7 @@ if (Request::isPost() && $conn && $hasGuests && $hasLoyaltyTxns) {
         if (empty($errors)) {
             $conn->begin_transaction();
             try {
-                $stmt = $conn->prepare("SELECT loyalty_points FROM guests WHERE id = ? LIMIT 1");
+                $stmt = $conn->prepare("SELECT loyalty_points FROM guests WHERE id = ? LIMIT 1 FOR UPDATE");
                 if (!($stmt instanceof mysqli_stmt)) {
                     throw new RuntimeException('Failed to load guest points.');
                 }
@@ -107,6 +120,8 @@ if (Request::isPost() && $conn && $hasGuests && $hasLoyaltyTxns) {
                     throw new RuntimeException('Insufficient points.');
                 }
 
+                $newTier = $hasGuestLoyaltyTier ? $loyaltyTierForPoints($newPoints) : null;
+
                 $stmt = $conn->prepare(
                     "INSERT INTO loyalty_transactions (guest_id, txn_type, points, reference, created_by)
                      VALUES (?, ?, ?, NULLIF(?,''), NULLIF(?,0))"
@@ -121,11 +136,19 @@ if (Request::isPost() && $conn && $hasGuests && $hasLoyaltyTxns) {
                     throw new RuntimeException('Failed to save transaction.');
                 }
 
-                $stmt = $conn->prepare("UPDATE guests SET loyalty_points = ? WHERE id = ?");
-                if (!($stmt instanceof mysqli_stmt)) {
-                    throw new RuntimeException('Failed to update points.');
+                if ($hasGuestLoyaltyTier) {
+                    $stmt = $conn->prepare("UPDATE guests SET loyalty_points = ?, loyalty_tier = ? WHERE id = ?");
+                    if (!($stmt instanceof mysqli_stmt)) {
+                        throw new RuntimeException('Failed to update points.');
+                    }
+                    $stmt->bind_param('isi', $newPoints, $newTier, $guestId);
+                } else {
+                    $stmt = $conn->prepare("UPDATE guests SET loyalty_points = ? WHERE id = ?");
+                    if (!($stmt instanceof mysqli_stmt)) {
+                        throw new RuntimeException('Failed to update points.');
+                    }
+                    $stmt->bind_param('ii', $newPoints, $guestId);
                 }
-                $stmt->bind_param('ii', $newPoints, $guestId);
                 $ok = $stmt->execute();
                 $stmt->close();
                 if (!$ok) {
@@ -134,7 +157,7 @@ if (Request::isPost() && $conn && $hasGuests && $hasLoyaltyTxns) {
 
                 $conn->commit();
                 Flash::set('success', 'Points updated.');
-                Response::redirect('loyalty_rewards.php?guest_id=' . $guestId);
+                Response::redirect('loyalty_rewards.php?guest_id=' . $guestId . ($q !== '' ? ('&q=' . urlencode($q)) : ''));
             } catch (Throwable $e) {
                 $conn->rollback();
                 $errors['general'] = $e->getMessage();
@@ -270,7 +293,7 @@ include __DIR__ . '/../partials/sidebar.php';
                     <div class="space-y-2" style="max-height: 560px; overflow:auto;">
                         <?php foreach ($guests as $g): ?>
                             <?php $gid = (int)($g['id'] ?? 0); $active = $guestId > 0 && $gid === $guestId; ?>
-                            <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/loyalty_rewards.php?guest_id=<?= $gid ?>" class="block rounded-lg border px-3 py-2 <?= $active ? 'border-blue-200 bg-blue-50' : 'border-gray-100 hover:bg-gray-50' ?>">
+                            <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/loyalty_rewards.php?guest_id=<?= $gid ?><?= $q !== '' ? ('&q=' . urlencode($q)) : '' ?>" class="block rounded-lg border px-3 py-2 <?= $active ? 'border-blue-200 bg-blue-50' : 'border-gray-100 hover:bg-gray-50' ?>">
                                 <div class="flex items-start justify-between gap-3">
                                     <div>
                                         <div class="text-sm font-medium text-gray-900"><?= htmlspecialchars(trim((string)($g['first_name'] ?? '') . ' ' . (string)($g['last_name'] ?? ''))) ?></div>
@@ -385,3 +408,4 @@ include __DIR__ . '/../partials/sidebar.php';
     </main>
 </section>
 <?php include __DIR__ . '/../partials/page_end.php';
+?>

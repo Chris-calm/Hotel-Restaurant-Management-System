@@ -5,8 +5,11 @@ RBACMiddleware::checkPageAccess();
 require_once __DIR__ . '/../core/bootstrap.php';
 require_once __DIR__ . '/../domain/Guests/GuestService.php';
 require_once __DIR__ . '/../domain/Rooms/RoomTypeService.php';
+require_once __DIR__ . '/../domain/Reservations/ReservationRepository.php';
 require_once __DIR__ . '/../domain/Reservations/ReservationService.php';
+require_once __DIR__ . '/../domain/Rooms/RoomRepository.php';
 require_once __DIR__ . '/../domain/Notifications/NotificationRepository.php';
+require_once __DIR__ . '/../domain/Housekeeping/HousekeepingRepository.php';
 
 $conn = Database::getConnection();
 
@@ -23,10 +26,16 @@ $reservationService = new ReservationService(
 
 $pendingApprovals = [];
 
+$hasEvents = false;
+$eventsHasClientUserId = false;
+$eventsHasClientGuestId = false;
+
 $reservationId = Request::int('get', 'reservation_id', 0);
 $prefillReservation = null;
 $lockRoomSelection = false;
 $systemReservationsOnly = true;
+
+$pendingEventInquiries = [];
 
 if ($reservationId > 0) {
     $prefillReservation = $reservationService->getReservationDetails($reservationId);
@@ -78,6 +87,25 @@ if ($conn) {
     $pendingOnlineReservations = $reservationService->listPendingOnlineReservations(50);
 }
 
+if ($conn) {
+    try {
+        $dbRow = $conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $conn->real_escape_string($db);
+        if ($db !== '') {
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events'");
+            $hasEvents = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            if ($hasEvents) {
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_user_id'");
+                $eventsHasClientUserId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_guest_id'");
+                $eventsHasClientGuestId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            }
+        }
+    } catch (Throwable $e) {
+    }
+}
+
 $availableRooms = [];
 $checkinValid = ($filters['checkin_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['checkin_date']) === 1);
 $checkoutValid = ($filters['checkout_date'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['checkout_date']) === 1);
@@ -96,19 +124,99 @@ if (!$systemReservationsOnly || $prefillReservation) {
             $filters['room_type_id']
         );
     } else {
-        $rooms = $roomRepo->search('');
-        foreach ($rooms as $r) {
-            if ((string)($r['status'] ?? '') !== 'Vacant') {
-                continue;
+        $hasHkCompletedAt = false;
+        if ($conn) {
+            try {
+                $dbRow = $conn->query('SELECT DATABASE()');
+                $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+                $db = $conn->real_escape_string($db);
+                if ($db !== '') {
+                    $res = $conn->query(
+                        "SELECT COUNT(*)
+                         FROM INFORMATION_SCHEMA.COLUMNS
+                         WHERE TABLE_SCHEMA = '{$db}'
+                           AND TABLE_NAME = 'housekeeping_tasks'
+                           AND COLUMN_NAME = 'completed_at'"
+                    );
+                    $hasHkCompletedAt = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+                }
+            } catch (Throwable $e) {
             }
-            if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
-                continue;
+        }
+
+        if ($conn && $hasHkCompletedAt) {
+            $roomTypeImageSelect = "NULL AS room_type_image_path";
+            $roomImageSelect = "NULL AS room_image_path";
+            try {
+                $dbRow = $conn->query('SELECT DATABASE()');
+                $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+                $db = $conn->real_escape_string($db);
+                if ($db !== '') {
+                    $res = $conn->query(
+                        "SELECT COUNT(*)
+                         FROM INFORMATION_SCHEMA.COLUMNS
+                         WHERE TABLE_SCHEMA = '{$db}'
+                           AND TABLE_NAME = 'rooms'
+                           AND COLUMN_NAME = 'image_path'"
+                    );
+                    $hasRoomImg = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+                    if ($hasRoomImg) {
+                        $roomImageSelect = 'rooms.image_path AS room_image_path';
+                    }
+
+                    $res = $conn->query(
+                        "SELECT COUNT(*)
+                         FROM INFORMATION_SCHEMA.COLUMNS
+                         WHERE TABLE_SCHEMA = '{$db}'
+                           AND TABLE_NAME = 'room_types'
+                           AND COLUMN_NAME = 'image_path'"
+                    );
+                    $hasRtImg = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+                    if ($hasRtImg) {
+                        $roomTypeImageSelect = 'rt.image_path AS room_type_image_path';
+                    }
+                }
+            } catch (Throwable $e) {
             }
 
-            if (!isset($r['room_image_path']) && isset($r['image_path'])) {
-                $r['room_image_path'] = $r['image_path'];
+            $rtFilter = (int)$filters['room_type_id'];
+            $sql =
+                "SELECT rooms.id, rooms.room_no, rooms.floor, rooms.status,
+                        rooms.room_type_id, rt.code AS room_type_code, rt.name AS room_type_name, rt.base_rate,
+                        {$roomImageSelect},
+                        {$roomTypeImageSelect},
+                        (
+                            SELECT MAX(t.completed_at)
+                            FROM housekeeping_tasks t
+                            WHERE t.room_id = rooms.id
+                              AND t.status = 'Done'
+                        ) AS last_cleaned_at
+                 FROM rooms
+                 INNER JOIN room_types rt ON rt.id = rooms.room_type_id
+                 WHERE rooms.status = 'Vacant'
+                   AND ({$rtFilter} = 0 OR rooms.room_type_id = {$rtFilter})
+                 ORDER BY last_cleaned_at DESC, rooms.room_no ASC";
+            $res = $conn->query($sql);
+            if ($res) {
+                while ($row = $res->fetch_assoc()) {
+                    $availableRooms[] = $row;
+                }
             }
-            $availableRooms[] = $r;
+        } else {
+            $rooms = $roomRepo->search('');
+            foreach ($rooms as $r) {
+                if ((string)($r['status'] ?? '') !== 'Vacant') {
+                    continue;
+                }
+                if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
+                    continue;
+                }
+
+                if (!isset($r['room_image_path']) && isset($r['image_path'])) {
+                    $r['room_image_path'] = $r['image_path'];
+                }
+                $availableRooms[] = $r;
+            }
         }
     }
 } else {
@@ -188,6 +296,118 @@ if ($prefillReservation) {
 }
 
 if (Request::isPost()) {
+    $action = (string)Request::post('action', '');
+
+    if ($action === 'confirm_event_inquiry' && $conn && $hasEvents) {
+        $eventIdPost = Request::int('post', 'event_id', 0);
+        $newStatus = (string)Request::post('new_status', 'Confirmed');
+        if (!in_array($newStatus, ['Confirmed', 'Cancelled'], true)) {
+            $errors['general'] = 'Invalid event status.';
+        }
+        if ($eventIdPost <= 0) {
+            $errors['general'] = 'Invalid event.';
+        }
+        if (empty($errors)) {
+            $stmt = $conn->prepare(
+                "SELECT id, event_no, title, status, client_user_id, client_guest_id,
+                        event_date, start_time, end_time, function_room_id
+                 FROM events
+                 WHERE id = ?
+                 LIMIT 1"
+            );
+            $ev = null;
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $eventIdPost);
+                $stmt->execute();
+                $ev = $stmt->get_result()->fetch_assoc() ?: null;
+                $stmt->close();
+            }
+            if (!$ev) {
+                $errors['general'] = 'Event not found.';
+            } elseif ((string)($ev['status'] ?? '') !== 'Inquiry') {
+                $errors['general'] = 'Only Inquiry events can be updated here.';
+            }
+        }
+        if (empty($errors)) {
+            $stmt = $conn->prepare("UPDATE events SET status = ? WHERE id = ?");
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('si', $newStatus, $eventIdPost);
+                $ok = $stmt->execute();
+                $stmt->close();
+                if ($ok) {
+                    if ($newStatus === 'Confirmed') {
+                        $frId = (int)($ev['function_room_id'] ?? 0);
+                        $eventDate = trim((string)($ev['event_date'] ?? ''));
+                        $endTime = trim((string)($ev['end_time'] ?? ''));
+                        if ($frId > 0 && $eventDate !== '' && $endTime !== '') {
+                            $scheduledFrom = date('Y-m-d H:i:s', strtotime($eventDate . ' ' . $endTime));
+                            $scheduledTo = date('Y-m-d H:i:s', strtotime($eventDate . ' ' . $endTime . ' +2 hours'));
+
+                            $already = false;
+                            $chk = $conn->prepare("SELECT id FROM housekeeping_tasks WHERE source_type = 'Event' AND source_id = ? LIMIT 1");
+                            if ($chk instanceof mysqli_stmt) {
+                                $chk->bind_param('i', $eventIdPost);
+                                $chk->execute();
+                                $row = $chk->get_result()->fetch_assoc();
+                                $chk->close();
+                                $already = !empty($row);
+                            }
+
+                            if (!$already) {
+                                $hkRepo = new HousekeepingRepository($conn);
+                                $hkRepo->createTask([
+                                    'room_id' => null,
+                                    'function_room_id' => $frId,
+                                    'task_type' => 'Cleaning',
+                                    'status' => 'Open',
+                                    'priority' => 'Normal',
+                                    'assigned_to' => null,
+                                    'created_by' => isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null,
+                                    'scheduled_from' => $scheduledFrom,
+                                    'scheduled_to' => $scheduledTo,
+                                    'source_type' => 'Event',
+                                    'source_id' => $eventIdPost,
+                                    'notes' => 'Auto-created after event confirmation.',
+                                ]);
+                            }
+                        }
+                    }
+
+                    $notifyUserId = 0;
+                    if ($eventsHasClientUserId) {
+                        $notifyUserId = (int)($ev['client_user_id'] ?? 0);
+                    }
+                    if ($notifyUserId <= 0 && $eventsHasClientGuestId) {
+                        $gid = (int)($ev['client_guest_id'] ?? 0);
+                        if ($gid > 0) {
+                            $st2 = $conn->prepare('SELECT id FROM users WHERE guest_id = ? LIMIT 1');
+                            if ($st2 instanceof mysqli_stmt) {
+                                $st2->bind_param('i', $gid);
+                                $st2->execute();
+                                $row = $st2->get_result()->fetch_assoc();
+                                $st2->close();
+                                $notifyUserId = (int)($row['id'] ?? 0);
+                            }
+                        }
+                    }
+
+                    if ($notifyUserId > 0) {
+                        $notifRepo = new NotificationRepository($conn);
+                        $ref = trim((string)($ev['event_no'] ?? ''));
+                        $title = $newStatus === 'Confirmed' ? 'Event confirmed' : 'Event cancelled';
+                        $msg = $ref !== '' ? ('Your event ' . $ref . ' has been ' . strtolower($newStatus) . '.') : ('Your event request has been ' . strtolower($newStatus) . '.');
+                        $url = '/PHP/guest/events_conferences.php';
+                        $notifRepo->createForUser($notifyUserId, $title, $msg, $url);
+                    }
+
+                    Flash::set('success', 'Event updated.');
+                    Response::redirect('front_desk.php');
+                }
+            }
+            $errors['general'] = 'Failed to update event.';
+        }
+    }
+
     if ($systemReservationsOnly && !$prefillReservation) {
         $errors['general'] = 'Walk-in creation is disabled. Please select a Pending online reservation from the list.';
     }
@@ -273,6 +493,27 @@ if (Request::isPost()) {
     }
 }
 
+if ($conn && $hasEvents) {
+    $stmt = $conn->prepare(
+        "SELECT e.id, e.event_no, e.title, e.client_name, e.event_date, e.start_time, e.end_time, e.expected_guests,
+                e.estimated_total, e.deposit_amount,
+                fr.name AS function_room_name
+         FROM events e
+         LEFT JOIN function_rooms fr ON fr.id = e.function_room_id
+         WHERE e.status = 'Inquiry'
+         ORDER BY e.id DESC
+         LIMIT 30"
+    );
+    if ($stmt instanceof mysqli_stmt) {
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $pendingEventInquiries[] = $row;
+        }
+        $stmt->close();
+    }
+}
+
 $selectedRoom = null;
 foreach ($availableRooms as $r) {
     if ((int)($data['room_id'] ?? 0) === (int)($r['id'] ?? 0)) {
@@ -354,6 +595,54 @@ include __DIR__ . '/../partials/sidebar.php';
                         <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
+
+                <div class="mt-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Event Inquiries</h3>
+                    <div class="text-xs text-gray-500 mb-4">Online event requests from guests (Inquiry). Confirm or cancel.</div>
+
+                    <?php if (!$hasEvents): ?>
+                        <div class="rounded-lg border border-gray-100 bg-gray-50 p-4 text-sm text-gray-600">
+                            Events table not available.
+                        </div>
+                    <?php elseif (empty($pendingEventInquiries)): ?>
+                        <div class="rounded-lg border border-gray-100 bg-gray-50 p-4 text-sm text-gray-600">
+                            No event inquiries.
+                        </div>
+                    <?php else: ?>
+                        <div class="space-y-2" style="max-height: 420px; overflow:auto;">
+                            <?php foreach ($pendingEventInquiries as $ev): ?>
+                                <div class="rounded-xl border border-gray-100 p-3">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-medium text-gray-900"><?= htmlspecialchars((string)($ev['client_name'] ?? '')) ?></div>
+                                            <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($ev['event_no'] ?? '')) ?> • <?= htmlspecialchars((string)($ev['event_date'] ?? '')) ?></div>
+                                            <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($ev['title'] ?? '')) ?></div>
+                                            <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($ev['function_room_name'] ?? '')) ?></div>
+                                        </div>
+                                        <div class="text-right">
+                                            <div class="text-xs text-gray-500">Est</div>
+                                            <div class="text-xs font-semibold text-gray-900 mt-1">₱<?= number_format((float)($ev['estimated_total'] ?? 0), 2) ?></div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3 grid grid-cols-2 gap-2">
+                                        <form method="post">
+                                            <input type="hidden" name="action" value="confirm_event_inquiry" />
+                                            <input type="hidden" name="event_id" value="<?= (int)($ev['id'] ?? 0) ?>" />
+                                            <input type="hidden" name="new_status" value="Confirmed" />
+                                            <button class="w-full px-3 py-2 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700 transition">Confirm</button>
+                                        </form>
+                                        <form method="post">
+                                            <input type="hidden" name="action" value="confirm_event_inquiry" />
+                                            <input type="hidden" name="event_id" value="<?= (int)($ev['id'] ?? 0) ?>" />
+                                            <input type="hidden" name="new_status" value="Cancelled" />
+                                            <button class="w-full px-3 py-2 rounded-lg bg-gray-200 text-gray-900 text-xs hover:bg-gray-300 transition">Cancel</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
 
                 <div class="mt-4">
                     <a href="<?= htmlspecialchars(App::baseUrl()) ?>/PHP/modules/guests/create.php" class="block w-full text-center px-4 py-2 rounded-lg border border-gray-200 text-sm hover:bg-gray-50 transition">Create Guest</a>
@@ -542,12 +831,12 @@ include __DIR__ . '/../partials/sidebar.php';
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Rate (optional override)</label>
-                        <input id="rate_override" name="rate" value="<?= htmlspecialchars($data['rate']) ?>" placeholder="Leave blank to use base rate" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input id="rate_override" name="rate" type="number" step="0.01" min="0" inputmode="decimal" value="<?= htmlspecialchars($data['rate']) ?>" placeholder="Leave blank to use base rate" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Deposit Amount</label>
-                        <input id="deposit_amount" name="deposit_amount" value="<?= htmlspecialchars($data['deposit_amount']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <input id="deposit_amount" name="deposit_amount" type="number" step="0.01" min="0" inputmode="decimal" value="<?= htmlspecialchars($data['deposit_amount']) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                         <?php if (isset($errors['deposit_amount'])): ?>
                             <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['deposit_amount']) ?></div>
                         <?php endif; ?>

@@ -22,6 +22,12 @@ $hasEvents = false;
 $eventsHasClientUserId = false;
 $eventsHasClientGuestId = false;
 
+$hasLoyaltyTxns = false;
+$hasLoyaltyEarnPosts = false;
+$hasLoyaltyRedeemPosts = false;
+$hasGuestLoyaltyPoints = false;
+$hasGuestLoyaltyTier = false;
+
 if ($conn) {
     try {
         $dbRow = $conn->query('SELECT DATABASE()');
@@ -54,12 +60,39 @@ if ($conn) {
                 $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_guest_id'");
                 $eventsHasClientGuestId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
             }
+
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'loyalty_transactions'");
+            $hasLoyaltyTxns = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'loyalty_earn_posts'");
+            $hasLoyaltyEarnPosts = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'loyalty_redeem_posts'");
+            $hasLoyaltyRedeemPosts = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            if ($hasGuests) {
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME = 'loyalty_points'");
+                $hasGuestLoyaltyPoints = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME = 'loyalty_tier'");
+                $hasGuestLoyaltyTier = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            }
         }
     } catch (Throwable $e) {
     }
 }
 
 $currentUserId = (int)($_SESSION['user_id'] ?? 0);
+
+$loyaltyTierForPoints = function (int $points): ?string {
+    if ($points >= 3000) {
+        return 'Platinum';
+    }
+    if ($points >= 1500) {
+        return 'Gold';
+    }
+    if ($points >= 500) {
+        return 'Silver';
+    }
+    return null;
+};
 
 $guestId = Request::int('get', 'guest_id', 0);
 $reservationId = Request::int('get', 'reservation_id', 0);
@@ -79,6 +112,184 @@ if (Request::isPost() && $conn && $hasReservations) {
     $reservationIdPost = Request::int('post', 'reservation_id', 0);
     if ($reservationIdPost > 0) {
         $reservationId = $reservationIdPost;
+    }
+
+    if ($action === 'redeem_loyalty' && $hasReservationPayments) {
+        $redeemPointsReq = Request::int('post', 'redeem_points', 0);
+        if ($reservationId <= 0) {
+            $errors['reservation_id'] = 'Reservation is required.';
+        }
+        if (!$hasGuests || !$hasGuestLoyaltyPoints || !$hasLoyaltyTxns || !$hasLoyaltyRedeemPosts) {
+            $errors['general'] = 'Loyalty redeem needs guests.loyalty_points, loyalty_transactions, and loyalty_redeem_posts tables.';
+        }
+        if ($redeemPointsReq <= 0) {
+            $errors['general'] = 'Redeem points must be at least 1.';
+        }
+
+        if (empty($errors)) {
+            $guestId = 0;
+            $stmt = $conn->prepare("SELECT guest_id FROM reservations WHERE id = ? LIMIT 1");
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $reservationId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $guestId = (int)($row['guest_id'] ?? 0);
+            }
+            if ($guestId <= 0) {
+                $errors['general'] = 'Reservation has no linked guest.';
+            }
+        }
+
+        $totChargesNow = 0.0;
+        $totPaidNow = 0.0;
+        if (empty($errors) && $reservationId > 0 && $hasFolioCharges) {
+            $stmt = $conn->prepare('SELECT COALESCE(SUM(amount),0) AS s FROM reservation_folio_charges WHERE reservation_id = ?');
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $reservationId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $totChargesNow = (float)($row['s'] ?? 0);
+            }
+        }
+        if (empty($errors) && $reservationId > 0) {
+            $stmt = $conn->prepare(
+                "SELECT payment_type, amount
+                 FROM reservation_payments
+                 WHERE reservation_id = ? AND status = 'Posted'"
+            );
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $reservationId);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                while ($row = $res->fetch_assoc()) {
+                    $t = (string)($row['payment_type'] ?? 'Payment');
+                    $a = (float)($row['amount'] ?? 0);
+                    if ($t === 'Payment') {
+                        $totPaidNow += $a;
+                    } elseif ($t === 'Refund') {
+                        $totPaidNow -= $a;
+                    }
+                }
+                $stmt->close();
+            }
+        }
+        $balanceNow = $totChargesNow - $totPaidNow;
+        if (empty($errors) && $balanceNow <= 0) {
+            $errors['general'] = 'No balance due for this reservation.';
+        }
+
+        if (empty($errors)) {
+            $conn->begin_transaction();
+            try {
+                $stmt = $conn->prepare("SELECT loyalty_points FROM guests WHERE id = ? LIMIT 1 FOR UPDATE");
+                if (!($stmt instanceof mysqli_stmt)) {
+                    throw new RuntimeException('Failed to load guest points.');
+                }
+                $stmt->bind_param('i', $guestId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if (!$row) {
+                    throw new RuntimeException('Guest not found.');
+                }
+                $currentPoints = (int)($row['loyalty_points'] ?? 0);
+
+                $maxByBalance = (int)floor(max(0.0, $balanceNow));
+                $redeemPointsApplied = max(0, min($redeemPointsReq, $currentPoints, $maxByBalance));
+                if ($redeemPointsApplied <= 0) {
+                    throw new RuntimeException('Insufficient points or balance.');
+                }
+                $amountF = (float)$redeemPointsApplied;
+
+                $stmt = $conn->prepare(
+                    "INSERT INTO reservation_payments (reservation_id, guest_id, payment_type, method, reference, amount, status, created_by)
+                     VALUES (?, NULLIF(?,0), 'Payment', 'Loyalty Points', 'LOYALTY REDEEM', ?, 'Posted', NULLIF(?,0))"
+                );
+                if (!($stmt instanceof mysqli_stmt)) {
+                    throw new RuntimeException('Failed to post loyalty payment.');
+                }
+                $stmt->bind_param('iidi', $reservationId, $guestId, $amountF, $currentUserId);
+                $ok = $stmt->execute();
+                $paymentIdNew = (int)($stmt->insert_id ?? 0);
+                $stmt->close();
+                if (!$ok || $paymentIdNew <= 0) {
+                    throw new RuntimeException('Failed to post loyalty payment.');
+                }
+
+                $stmt = $conn->prepare("SELECT COUNT(*) AS c FROM loyalty_redeem_posts WHERE source_type = 'RES_PAYMENT' AND source_id = ?");
+                $alreadyPosted = false;
+                if ($stmt instanceof mysqli_stmt) {
+                    $stmt->bind_param('i', $paymentIdNew);
+                    $stmt->execute();
+                    $r = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    $alreadyPosted = ((int)($r['c'] ?? 0) > 0);
+                }
+                if ($alreadyPosted) {
+                    throw new RuntimeException('Duplicate loyalty redeem posting.');
+                }
+
+                $newPoints = $currentPoints - $redeemPointsApplied;
+                if ($newPoints < 0) {
+                    throw new RuntimeException('Insufficient points.');
+                }
+                $newTier = $hasGuestLoyaltyTier ? $loyaltyTierForPoints($newPoints) : null;
+
+                $ref = 'RES ' . $reservationId . ' LOYALTY PAY#' . $paymentIdNew;
+                $stmt = $conn->prepare(
+                    "INSERT INTO loyalty_transactions (guest_id, txn_type, points, reference, created_by)
+                     VALUES (?, 'Redeem', ?, ?, NULLIF(?,0))"
+                );
+                if (!($stmt instanceof mysqli_stmt)) {
+                    throw new RuntimeException('Failed to save loyalty redemption.');
+                }
+                $stmt->bind_param('iisi', $guestId, $redeemPointsApplied, $ref, $currentUserId);
+                $ok = $stmt->execute();
+                $stmt->close();
+                if (!$ok) {
+                    throw new RuntimeException('Failed to save loyalty redemption.');
+                }
+
+                if ($hasGuestLoyaltyTier) {
+                    $stmt = $conn->prepare('UPDATE guests SET loyalty_points = ?, loyalty_tier = ? WHERE id = ?');
+                    if (!($stmt instanceof mysqli_stmt)) {
+                        throw new RuntimeException('Failed to update guest points.');
+                    }
+                    $stmt->bind_param('isi', $newPoints, $newTier, $guestId);
+                } else {
+                    $stmt = $conn->prepare('UPDATE guests SET loyalty_points = ? WHERE id = ?');
+                    if (!($stmt instanceof mysqli_stmt)) {
+                        throw new RuntimeException('Failed to update guest points.');
+                    }
+                    $stmt->bind_param('ii', $newPoints, $guestId);
+                }
+                $ok = $stmt->execute();
+                $stmt->close();
+                if (!$ok) {
+                    throw new RuntimeException('Failed to update guest points.');
+                }
+
+                $stmt = $conn->prepare("INSERT INTO loyalty_redeem_posts (source_type, source_id, guest_id, points, created_by) VALUES ('RES_PAYMENT', ?, ?, ?, NULLIF(?,0))");
+                if (!($stmt instanceof mysqli_stmt)) {
+                    throw new RuntimeException('Failed to record loyalty redeem posting.');
+                }
+                $stmt->bind_param('iiii', $paymentIdNew, $guestId, $redeemPointsApplied, $currentUserId);
+                $ok = $stmt->execute();
+                $stmt->close();
+                if (!$ok) {
+                    throw new RuntimeException('Failed to record loyalty redeem posting.');
+                }
+
+                $conn->commit();
+                Flash::set('success', 'Loyalty points redeemed and posted as payment.');
+                Response::redirect('billing_payments.php?reservation_id=' . $reservationId);
+            } catch (Throwable $e) {
+                $conn->rollback();
+                $errors['general'] = $e->getMessage();
+            }
+        }
     }
 
     if ($action === 'add_charge' && $hasFolioCharges) {
@@ -294,21 +505,104 @@ if (Request::isPost() && $conn && $hasReservations) {
             $amountF = (float)$amount;
             $methodFinal = ($paymentType === 'Adjustment') ? null : $method;
 
-            $stmt = $conn->prepare(
-                "INSERT INTO reservation_payments (reservation_id, guest_id, payment_type, method, reference, amount, status, created_by)
-                 VALUES (?, NULLIF(?,0), ?, ?, NULLIF(?,''), ?, 'Posted', NULLIF(?,0))"
-            );
-            if ($stmt instanceof mysqli_stmt) {
+            $conn->begin_transaction();
+            try {
+                $stmt = $conn->prepare(
+                    "INSERT INTO reservation_payments (reservation_id, guest_id, payment_type, method, reference, amount, status, created_by)
+                     VALUES (?, NULLIF(?,0), ?, ?, NULLIF(?,''), ?, 'Posted', NULLIF(?,0))"
+                );
+                if (!($stmt instanceof mysqli_stmt)) {
+                    throw new RuntimeException('Failed to post payment.');
+                }
                 $stmt->bind_param('iisssdi', $reservationId, $guestId, $paymentType, $methodFinal, $reference, $amountF, $currentUserId);
                 $ok = $stmt->execute();
+                $paymentIdNew = (int)($stmt->insert_id ?? 0);
                 $stmt->close();
-                if ($ok) {
-                    Flash::set('success', 'Payment entry posted.');
-                    Response::redirect('billing_payments.php?reservation_id=' . $reservationId);
+                if (!$ok || $paymentIdNew <= 0) {
+                    throw new RuntimeException('Failed to post payment.');
                 }
-            }
 
-            $errors['general'] = 'Failed to post payment.';
+                if ($paymentType === 'Payment' && $guestId > 0 && $hasGuests && $hasGuestLoyaltyPoints && $hasLoyaltyTxns && $hasLoyaltyEarnPosts) {
+                    $earned = (int)floor(max(0.0, $amountF) / 100);
+                    if ($earned > 0) {
+                        $stmt = $conn->prepare("SELECT COUNT(*) AS c FROM loyalty_earn_posts WHERE source_type = 'RES_PAYMENT' AND source_id = ?");
+                        $alreadyEarned = false;
+                        if ($stmt instanceof mysqli_stmt) {
+                            $stmt->bind_param('i', $paymentIdNew);
+                            $stmt->execute();
+                            $row = $stmt->get_result()->fetch_assoc();
+                            $stmt->close();
+                            $alreadyEarned = ((int)($row['c'] ?? 0) > 0);
+                        }
+
+                        if (!$alreadyEarned) {
+                            $stmt = $conn->prepare('SELECT loyalty_points FROM guests WHERE id = ? LIMIT 1 FOR UPDATE');
+                            if (!($stmt instanceof mysqli_stmt)) {
+                                throw new RuntimeException('Failed to load guest points.');
+                            }
+                            $stmt->bind_param('i', $guestId);
+                            $stmt->execute();
+                            $row = $stmt->get_result()->fetch_assoc();
+                            $stmt->close();
+                            $currentPoints = (int)($row['loyalty_points'] ?? 0);
+                            $newPoints = $currentPoints + $earned;
+                            $newTier = $hasGuestLoyaltyTier ? $loyaltyTierForPoints($newPoints) : null;
+
+                            $ref = $reference !== '' ? ('RES ' . $reservationId . ' ' . $reference) : ('RES ' . $reservationId . ' PAY#' . $paymentIdNew);
+                            $stmt = $conn->prepare(
+                                "INSERT INTO loyalty_transactions (guest_id, txn_type, points, reference, created_by)
+                                 VALUES (?, 'Earn', ?, ?, NULLIF(?,0))"
+                            );
+                            if (!($stmt instanceof mysqli_stmt)) {
+                                throw new RuntimeException('Failed to save loyalty transaction.');
+                            }
+                            $stmt->bind_param('iisi', $guestId, $earned, $ref, $currentUserId);
+                            $ok = $stmt->execute();
+                            $stmt->close();
+                            if (!$ok) {
+                                throw new RuntimeException('Failed to save loyalty transaction.');
+                            }
+
+                            if ($hasGuestLoyaltyTier) {
+                                $stmt = $conn->prepare('UPDATE guests SET loyalty_points = ?, loyalty_tier = ? WHERE id = ?');
+                                if (!($stmt instanceof mysqli_stmt)) {
+                                    throw new RuntimeException('Failed to update guest points.');
+                                }
+                                $stmt->bind_param('isi', $newPoints, $newTier, $guestId);
+                            } else {
+                                $stmt = $conn->prepare('UPDATE guests SET loyalty_points = ? WHERE id = ?');
+                                if (!($stmt instanceof mysqli_stmt)) {
+                                    throw new RuntimeException('Failed to update guest points.');
+                                }
+                                $stmt->bind_param('ii', $newPoints, $guestId);
+                            }
+                            $ok = $stmt->execute();
+                            $stmt->close();
+                            if (!$ok) {
+                                throw new RuntimeException('Failed to update guest points.');
+                            }
+
+                            $stmt = $conn->prepare("INSERT INTO loyalty_earn_posts (source_type, source_id, guest_id, points, created_by) VALUES ('RES_PAYMENT', ?, ?, ?, NULLIF(?,0))");
+                            if (!($stmt instanceof mysqli_stmt)) {
+                                throw new RuntimeException('Failed to record loyalty earn posting.');
+                            }
+                            $stmt->bind_param('iiii', $paymentIdNew, $guestId, $earned, $currentUserId);
+                            $ok = $stmt->execute();
+                            $stmt->close();
+                            if (!$ok) {
+                                throw new RuntimeException('Failed to record loyalty earn posting.');
+                            }
+                        }
+                    }
+                }
+
+                $conn->commit();
+                Flash::set('success', 'Payment entry posted.');
+                Response::redirect('billing_payments.php?reservation_id=' . $reservationId);
+            } catch (Throwable $e) {
+                $conn->rollback();
+                $errors['general'] = $e->getMessage();
+            }
         }
     }
 }
@@ -411,7 +705,9 @@ if ($selectedReservation && $guestId <= 0) {
 }
 
 if ($conn && $hasGuests && $guestId > 0) {
-    $stmt = $conn->prepare('SELECT id, first_name, last_name, phone, email FROM guests WHERE id = ? LIMIT 1');
+    $tierSelect = $hasGuestLoyaltyTier ? 'loyalty_tier' : "NULL AS loyalty_tier";
+    $pointsSelect = $hasGuestLoyaltyPoints ? 'loyalty_points' : '0 AS loyalty_points';
+    $stmt = $conn->prepare("SELECT id, first_name, last_name, phone, email, {$tierSelect}, {$pointsSelect} FROM guests WHERE id = ? LIMIT 1");
     if ($stmt instanceof mysqli_stmt) {
         $stmt->bind_param('i', $guestId);
         $stmt->execute();
@@ -1184,6 +1480,26 @@ include __DIR__ . '/../partials/sidebar.php';
                                 <button class="w-full px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 transition">Post</button>
                                 <p class="text-xs text-gray-500">Refund reduces total payments. Adjustment posts a ledger entry without method rules.</p>
                             </form>
+
+                            <?php if ($selectedReservation && $hasGuests && $hasGuestLoyaltyPoints && $hasLoyaltyTxns && $hasLoyaltyRedeemPosts): ?>
+                                <?php
+                                    $availPts = (int)($selectedGuest['loyalty_points'] ?? 0);
+                                    $maxByBalance = (int)floor(max(0.0, (float)$balance));
+                                    $maxRedeem = max(0, min($availPts, $maxByBalance));
+                                ?>
+                                <div class="mt-6 pt-6 border-t border-gray-100">
+                                    <h4 class="text-sm font-medium text-gray-900 mb-2">Redeem Loyalty Points</h4>
+                                    <div class="text-xs text-gray-500 mb-3">₱1 per point • Posts as Payment Method: Loyalty Points</div>
+                                    <form method="post" class="space-y-2">
+                                        <input type="hidden" name="action" value="redeem_loyalty" />
+                                        <input type="hidden" name="reservation_id" value="<?= (int)$reservationId ?>" />
+                                        <label class="block text-xs text-gray-600">Points to redeem</label>
+                                        <input type="number" name="redeem_points" min="1" max="<?= (int)$maxRedeem ?>" value="0" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" <?= $maxRedeem <= 0 ? 'disabled' : '' ?> />
+                                        <div class="text-[11px] text-gray-500">Available: <?= (int)$availPts ?> pts • Max for this folio: <?= (int)$maxRedeem ?> pts</div>
+                                        <button class="w-full px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black transition" <?= $maxRedeem <= 0 ? 'disabled' : '' ?>>Redeem & Post Payment</button>
+                                    </form>
+                                </div>
+                            <?php endif; ?>
 
                             <script>
                                 (function () {

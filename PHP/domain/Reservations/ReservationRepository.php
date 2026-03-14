@@ -11,10 +11,40 @@ final class ReservationRepository
     private ?bool $hasPromoColumns = null;
     private ?bool $hasGuestLoyaltyColumns = null;
     private ?bool $hasPromoCodesTable = null;
+    private ?bool $hasHousekeepingCompletedAt = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasHousekeepingCompletedAt(): bool
+    {
+        if ($this->hasHousekeepingCompletedAt !== null) {
+            return $this->hasHousekeepingCompletedAt;
+        }
+        if (!$this->conn) {
+            $this->hasHousekeepingCompletedAt = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasHousekeepingCompletedAt = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'housekeeping_tasks'
+               AND COLUMN_NAME = 'completed_at'"
+        );
+        $this->hasHousekeepingCompletedAt = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+        return $this->hasHousekeepingCompletedAt;
     }
 
     public function listReservationsByGuestId(int $guestId, int $limit = 50): array
@@ -530,26 +560,55 @@ final class ReservationRepository
             ? 'rooms.image_path AS room_image_path'
             : 'NULL AS room_image_path';
 
-        $sql =
-            "SELECT rooms.id, rooms.room_no, rooms.floor, rooms.status AS room_status,
-                    room_types.id AS room_type_id, room_types.code AS room_type_code, room_types.name AS room_type_name,
-                    room_types.base_rate,
-                    {$roomTypeImageSelect},
-                    {$roomImageSelect}
-             FROM rooms
-             INNER JOIN room_types ON room_types.id = rooms.room_type_id
-             WHERE rooms.status <> 'Out of Order'
-               AND (? = 0 OR rooms.room_type_id = ?)
-               AND NOT EXISTS (
-                    SELECT 1
-                    FROM reservation_rooms rr
-                    INNER JOIN reservations r ON r.id = rr.reservation_id
-                    WHERE rr.room_id = rooms.id
-                      AND r.status IN $statusSql
-                      AND r.checkin_date < ?
-                      AND r.checkout_date > ?
-               )
-             ORDER BY rooms.room_no ASC";
+        if ($this->hasHousekeepingCompletedAt()) {
+            $sql =
+                "SELECT rooms.id, rooms.room_no, rooms.floor, rooms.status AS room_status,
+                        room_types.id AS room_type_id, room_types.code AS room_type_code, room_types.name AS room_type_name,
+                        room_types.base_rate,
+                        {$roomTypeImageSelect},
+                        {$roomImageSelect},
+                        (
+                            SELECT MAX(t.completed_at)
+                            FROM housekeeping_tasks t
+                            WHERE t.room_id = rooms.id
+                              AND t.status = 'Done'
+                        ) AS last_cleaned_at
+                 FROM rooms
+                 INNER JOIN room_types ON room_types.id = rooms.room_type_id
+                 WHERE rooms.status <> 'Out of Order'
+                   AND (? = 0 OR rooms.room_type_id = ?)
+                   AND NOT EXISTS (
+                        SELECT 1
+                        FROM reservation_rooms rr
+                        INNER JOIN reservations r ON r.id = rr.reservation_id
+                        WHERE rr.room_id = rooms.id
+                          AND r.status IN $statusSql
+                          AND r.checkin_date < ?
+                          AND r.checkout_date > ?
+                   )
+                 ORDER BY last_cleaned_at DESC, rooms.room_no ASC";
+        } else {
+            $sql =
+                "SELECT rooms.id, rooms.room_no, rooms.floor, rooms.status AS room_status,
+                        room_types.id AS room_type_id, room_types.code AS room_type_code, room_types.name AS room_type_name,
+                        room_types.base_rate,
+                        {$roomTypeImageSelect},
+                        {$roomImageSelect}
+                 FROM rooms
+                 INNER JOIN room_types ON room_types.id = rooms.room_type_id
+                 WHERE rooms.status <> 'Out of Order'
+                   AND (? = 0 OR rooms.room_type_id = ?)
+                   AND NOT EXISTS (
+                        SELECT 1
+                        FROM reservation_rooms rr
+                        INNER JOIN reservations r ON r.id = rr.reservation_id
+                        WHERE rr.room_id = rooms.id
+                          AND r.status IN $statusSql
+                          AND r.checkin_date < ?
+                          AND r.checkout_date > ?
+                   )
+                 ORDER BY rooms.room_no ASC";
+        }
 
         $stmt = $this->conn->prepare($sql);
         if (!$stmt) {

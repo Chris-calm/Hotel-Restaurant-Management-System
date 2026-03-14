@@ -1152,8 +1152,46 @@ if ($conn) {
 
 if ($conn && $hasFunctionRooms) {
     $roomImageSelect = $hasFunctionRoomImageColumn ? 'image_path' : 'NULL AS image_path';
+    $hasHkCompletedAt = false;
+    $hasHkFunctionRoomId = false;
+    try {
+        $dbRow = $conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $conn->real_escape_string($db);
+        if ($db !== '') {
+            $res = $conn->query(
+                "SELECT COUNT(*)
+                 FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = '{$db}'
+                   AND TABLE_NAME = 'housekeeping_tasks'
+                   AND COLUMN_NAME = 'completed_at'"
+            );
+            $hasHkCompletedAt = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $res = $conn->query(
+                "SELECT COUNT(*)
+                 FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = '{$db}'
+                   AND TABLE_NAME = 'housekeeping_tasks'
+                   AND COLUMN_NAME = 'function_room_id'"
+            );
+            $hasHkFunctionRoomId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+        }
+    } catch (Throwable $e) {
+    }
+
+    $lastCleanedExpr = ($hasHkCompletedAt && $hasHkFunctionRoomId)
+        ? "(
+                SELECT MAX(t.completed_at)
+                FROM housekeeping_tasks t
+                WHERE t.function_room_id = fr.id
+                  AND t.status = 'Done'
+           ) AS last_cleaned_at,"
+        : "NULL AS last_cleaned_at,";
+
     $res = $conn->query(
         "SELECT fr.id, fr.name, fr.capacity, fr.base_rate, {$roomImageSelect}, fr.status, fr.is_active, fr.notes, fr.created_at,
+                {$lastCleanedExpr}
                 (
                     SELECT e.status
                     FROM events e
@@ -1164,7 +1202,9 @@ if ($conn && $hasFunctionRooms) {
                     LIMIT 1
                 ) AS active_event_status
          FROM function_rooms fr
-         ORDER BY fr.id DESC"
+         ORDER BY (fr.status = 'Available') DESC,
+                  last_cleaned_at DESC,
+                  fr.name ASC"
     );
     if ($res) {
         while ($row = $res->fetch_assoc()) {
