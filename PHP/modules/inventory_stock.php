@@ -15,6 +15,7 @@ $q = trim((string)Request::get('q', ''));
 $hasCategories = false;
 $hasItems = false;
 $hasMovements = false;
+$hasItemImagePath = false;
 
 if ($conn) {
     try {
@@ -28,6 +29,11 @@ if ($conn) {
             $hasItems = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
             $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'inventory_movements'");
             $hasMovements = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            if ($hasItems) {
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'inventory_items' AND COLUMN_NAME = 'image_path'");
+                $hasItemImagePath = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            }
         }
     } catch (Throwable $e) {
     }
@@ -66,6 +72,7 @@ if (Request::isPost() && $conn && $hasItems) {
         $unit = trim((string)Request::post('unit', 'pcs'));
         $qty = (string)Request::post('quantity', '0');
         $reorder = (string)Request::post('reorder_level', '0');
+        $imagePath = '';
 
         if ($name === '') {
             $errors['item_name'] = 'Item name is required.';
@@ -80,16 +87,70 @@ if (Request::isPost() && $conn && $hasItems) {
             $errors['reorder_level'] = 'Reorder level is invalid.';
         }
 
+        if (empty($errors) && $hasItemImagePath && isset($_FILES['item_image']) && is_array($_FILES['item_image'])) {
+            $f = $_FILES['item_image'];
+            $err = (int)($f['error'] ?? UPLOAD_ERR_NO_FILE);
+            if ($err !== UPLOAD_ERR_NO_FILE) {
+                if ($err !== UPLOAD_ERR_OK) {
+                    $errors['item_image'] = 'Failed to upload image.';
+                } else {
+                    $tmp = (string)($f['tmp_name'] ?? '');
+                    $size = (int)($f['size'] ?? 0);
+                    if ($tmp === '' || !is_uploaded_file($tmp)) {
+                        $errors['item_image'] = 'Invalid uploaded image.';
+                    } elseif ($size <= 0 || $size > (3 * 1024 * 1024)) {
+                        $errors['item_image'] = 'Image must be under 3MB.';
+                    } else {
+                        $orig = (string)($f['name'] ?? '');
+                        $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
+                        if ($ext === 'jpeg') $ext = 'jpg';
+                        if (!in_array($ext, ['jpg', 'png', 'webp', 'gif'], true)) {
+                            $errors['item_image'] = 'Supported formats: JPG, PNG, WEBP, GIF.';
+                        } else {
+                            $root = dirname(__DIR__, 2);
+                            $uploadDir = $root . '/uploads/inventory/items';
+                            if (!is_dir($uploadDir)) {
+                                @mkdir($uploadDir, 0777, true);
+                            }
+                            if (!is_dir($uploadDir) || !is_writable($uploadDir)) {
+                                $errors['item_image'] = 'Upload folder is not writable.';
+                            } else {
+                                $safeBase = preg_replace('/[^A-Za-z0-9_-]/', '_', $name);
+                                $filename = 'inv_' . ($safeBase !== '' ? substr($safeBase, 0, 24) . '_' : '') . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
+                                $dest = $uploadDir . '/' . $filename;
+                                if (!move_uploaded_file($tmp, $dest)) {
+                                    $errors['item_image'] = 'Failed to save uploaded image.';
+                                } else {
+                                    $imagePath = '/uploads/inventory/items/' . $filename;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (empty($errors)) {
             $qtyF = (float)$qty;
             $reorderF = (float)$reorder;
 
-            $stmt = $conn->prepare(
-                "INSERT INTO inventory_items (category_id, sku, name, unit, quantity, reorder_level)
-                 VALUES (NULLIF(?,0), NULLIF(?,''), ?, ?, ?, ?)"
-            );
+            if ($hasItemImagePath) {
+                $stmt = $conn->prepare(
+                    "INSERT INTO inventory_items (category_id, sku, name, image_path, unit, quantity, reorder_level)
+                     VALUES (NULLIF(?,0), NULLIF(?,''), ?, NULLIF(?,''), ?, ?, ?)"
+                );
+            } else {
+                $stmt = $conn->prepare(
+                    "INSERT INTO inventory_items (category_id, sku, name, unit, quantity, reorder_level)
+                     VALUES (NULLIF(?,0), NULLIF(?,''), ?, ?, ?, ?)"
+                );
+            }
             if ($stmt instanceof mysqli_stmt) {
-                $stmt->bind_param('isssdd', $categoryId, $sku, $name, $unit, $qtyF, $reorderF);
+                if ($hasItemImagePath) {
+                    $stmt->bind_param('issssdd', $categoryId, $sku, $name, $imagePath, $unit, $qtyF, $reorderF);
+                } else {
+                    $stmt->bind_param('isssdd', $categoryId, $sku, $name, $unit, $qtyF, $reorderF);
+                }
                 $ok = $stmt->execute();
                 $stmt->close();
                 if ($ok) {
@@ -206,8 +267,9 @@ if ($conn && $hasCategories) {
 }
 
 if ($conn && $hasItems) {
+    $imgSelect = $hasItemImagePath ? 'i.image_path,' : 'NULL AS image_path,';
     $sql =
-        "SELECT i.id, i.category_id, c.name AS category_name, i.sku, i.name, i.unit, i.quantity, i.reorder_level, i.created_at
+        "SELECT i.id, i.category_id, c.name AS category_name, i.sku, {$imgSelect} i.name, i.unit, i.quantity, i.reorder_level, i.created_at
          FROM inventory_items i
          LEFT JOIN inventory_categories c ON c.id = i.category_id";
     $where = [];
@@ -265,6 +327,20 @@ $pendingApprovals = [];
 
 include __DIR__ . '/../partials/page_start.php';
 include __DIR__ . '/../partials/sidebar.php';
+
+$buildImageUrl = static function (string $path) use ($APP_BASE_URL): string {
+    $path = trim($path);
+    if ($path === '') {
+        return '';
+    }
+    if (preg_match('/^https?:\/\//i', $path)) {
+        return $path;
+    }
+    if (substr($path, 0, 1) === '/') {
+        return $APP_BASE_URL . $path;
+    }
+    return $APP_BASE_URL . '/' . $path;
+};
 ?>
 <section id="content">
     <?php include __DIR__ . '/../partials/header.php'; ?>
@@ -338,7 +414,7 @@ include __DIR__ . '/../partials/sidebar.php';
                 </div>
 
                 <h3 class="text-lg font-medium text-gray-900 mb-4">Add Item</h3>
-                <form method="post" class="space-y-3">
+                <form method="post" enctype="multipart/form-data" class="space-y-3">
                     <input type="hidden" name="action" value="create_item" />
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
@@ -367,6 +443,14 @@ include __DIR__ . '/../partials/sidebar.php';
                         <input name="item_name" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
                         <?php if (isset($errors['item_name'])): ?>
                             <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['item_name']) ?></div>
+                        <?php endif; ?>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Item Image (optional)</label>
+                        <input type="file" name="item_image" accept="image/*" class="w-full text-sm" />
+                        <div class="text-xs text-gray-500 mt-1">JPG, PNG, WEBP, GIF (max 3MB)</div>
+                        <?php if (isset($errors['item_image'])): ?>
+                            <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['item_image']) ?></div>
                         <?php endif; ?>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -449,6 +533,7 @@ include __DIR__ . '/../partials/sidebar.php';
                         <table class="min-w-full text-sm">
                             <thead class="bg-gray-50 text-gray-600">
                                 <tr>
+                                    <th class="text-left font-medium px-4 py-3" style="width:72px;">Image</th>
                                     <th class="text-left font-medium px-4 py-3">Item</th>
                                     <th class="text-left font-medium px-4 py-3">Category</th>
                                     <th class="text-right font-medium px-4 py-3">Qty</th>
@@ -461,8 +546,18 @@ include __DIR__ . '/../partials/sidebar.php';
                                         $qtyV = (float)($it['quantity'] ?? 0);
                                         $reorderV = (float)($it['reorder_level'] ?? 0);
                                         $isLow = $qtyV <= $reorderV;
+                                        $imgUrl = $buildImageUrl((string)($it['image_path'] ?? ''));
                                     ?>
                                     <tr class="hover:bg-gray-50">
+                                        <td class="px-4 py-3">
+                                            <?php if ($imgUrl !== ''): ?>
+                                                <img src="<?= htmlspecialchars($imgUrl) ?>" alt="Item" style="width:48px;height:48px;border-radius:10px;object-fit:cover;object-position:center;border:1px solid #e5e7eb;background:#fff;" />
+                                            <?php else: ?>
+                                                <div style="width:48px;height:48px;border-radius:10px;border:1px solid #e5e7eb;background:#f8fafc;display:flex;align-items:center;justify-content:center;color:#94a3b8;">
+                                                    <i class='bx bx-image' style="font-size:22px;"></i>
+                                                </div>
+                                            <?php endif; ?>
+                                        </td>
                                         <td class="px-4 py-3">
                                             <div class="font-medium text-gray-900"><?= htmlspecialchars((string)($it['name'] ?? '')) ?></div>
                                             <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($it['sku'] ?? '')) ?><?= ((string)($it['sku'] ?? '') !== '') ? ' • ' : '' ?><?= htmlspecialchars((string)($it['unit'] ?? '')) ?></div>

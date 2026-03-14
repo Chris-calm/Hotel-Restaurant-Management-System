@@ -5,6 +5,7 @@ if (!isset($pendingApprovals)) {
 }
 
 require_once __DIR__ . '/../core/bootstrap.php';
+require_once __DIR__ . '/functions.php';
 $APP_BASE_URL = App::baseUrl();
 
 $currentUserProfilePic = $APP_BASE_URL . '/PICTURES/Ser.jpg';
@@ -88,6 +89,11 @@ if ($conn && $currentUserId > 0) {
 }
 
 $headerNotificationCount = $hasNotifications ? $notificationUnreadCount : count($pendingApprovals);
+$hasNotificationsFallback = !$hasNotifications;
+if ($hasNotificationsFallback && empty($pendingApprovals) && $conn) {
+    $pendingApprovals = getPendingItems($conn);
+    $headerNotificationCount = count($pendingApprovals);
+}
 $currentUri = (string)($_SERVER['REQUEST_URI'] ?? '');
 ?>
 <div class="popup-overlay" id="popupOverlay"></div>
@@ -147,7 +153,7 @@ $currentUri = (string)($_SERVER['REQUEST_URI'] ?? '');
                     </div>
                 <?php else: ?>
                     <?php foreach ($pendingApprovals as $item): ?>
-                    <a href="#" class="notification-item">
+                    <a href="<?= htmlspecialchars((string)($item['url'] ?? '#')) ?>" class="notification-item">
                         <div class="title"><?= htmlspecialchars($item['type'] ?? 'Item') ?></div>
                         <div class="desc"><?= htmlspecialchars($item['name'] ?? '') ?></div>
                         <div class="time"><?= htmlspecialchars($item['created_at'] ?? '') ?></div>

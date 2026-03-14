@@ -438,6 +438,7 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   category_id INT UNSIGNED NULL,
   sku VARCHAR(40) NULL UNIQUE,
   name VARCHAR(120) NOT NULL,
+  image_path VARCHAR(255) NULL,
   unit VARCHAR(20) NOT NULL DEFAULT 'pcs',
   quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   reorder_level DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -446,6 +447,9 @@ CREATE TABLE IF NOT EXISTS inventory_items (
     FOREIGN KEY (category_id) REFERENCES inventory_categories(id)
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;
+
+ALTER TABLE inventory_items
+  ADD COLUMN IF NOT EXISTS image_path VARCHAR(255) NULL;
 
 CREATE TABLE IF NOT EXISTS menu_item_ingredients (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

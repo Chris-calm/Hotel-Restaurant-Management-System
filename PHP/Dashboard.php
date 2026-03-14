@@ -172,6 +172,8 @@ $pendingApprovals = [];
 
 if ($conn) {
     try {
+        $pendingApprovals = getPendingItems($conn);
+
         $result = $conn->query("SELECT COUNT(*) as count FROM reservations WHERE DATE(created_at) = CURDATE()");
         $todayReservations = $result ? (int)($result->fetch_assoc()['count'] ?? 0) : 0;
 
@@ -568,7 +570,10 @@ include __DIR__ . '/partials/sidebar.php';
 
             <div class="bg-white rounded-lg border border-gray-100">
                 <div class="px-6 py-4 border-b border-gray-100">
-                    <h3 class="text-lg font-medium text-gray-900">Pending Approvals</h3>
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-lg font-medium text-gray-900">Pending Approvals</h3>
+                        <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/front_desk.php" class="text-sm font-medium text-blue-600 hover:text-blue-700">View all</a>
+                    </div>
                 </div>
                 <div class="p-6">
                     <?php if (empty($pendingApprovals)): ?>
@@ -582,11 +587,11 @@ include __DIR__ . '/partials/sidebar.php';
                     <?php else: ?>
                         <div class="space-y-3">
                             <?php foreach ($pendingApprovals as $item): ?>
-                                <a href="#" class="block p-4 rounded-lg border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors group">
+                                <a href="<?= htmlspecialchars((string)($item['url'] ?? '#')) ?>" class="block p-4 rounded-lg border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors group">
                                     <div class="flex items-center justify-between">
                                         <div>
-                                            <p class="font-medium text-gray-900"><?= htmlspecialchars($item['type'] ?? 'Item') ?></p>
-                                            <p class="text-sm text-gray-500 mt-1"><?= htmlspecialchars($item['name'] ?? '') ?></p>
+                                            <p class="font-medium text-gray-900 group-hover:text-gray-700"><?= htmlspecialchars($item['type']) ?></p>
+                                            <p class="text-sm text-gray-500 mt-1"><?= htmlspecialchars($item['name']) ?></p>
                                         </div>
                                     </div>
                                 </a>
