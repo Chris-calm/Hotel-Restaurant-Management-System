@@ -80,6 +80,17 @@ if ($conn && $hasFunctionRooms) {
     } catch (Throwable $e) {
     }
 
+    $eventHoldWhere = '';
+    if ($hasEvents) {
+        $eventHoldWhere = " AND NOT EXISTS (\n"
+            . "     SELECT 1\n"
+            . "       FROM events e\n"
+            . "      WHERE e.function_room_id = fr.id\n"
+            . "        AND e.status IN ('Inquiry','Confirmed')\n"
+            . "        AND e.event_date >= CURDATE()\n"
+            . " )";
+    }
+
     if ($hasHkCompletedAt && $hasHkFunctionRoomId) {
         $res = $conn->query(
             "SELECT fr.id, fr.name, fr.capacity, fr.base_rate, fr.image_path, fr.status, fr.is_active, fr.notes,
@@ -90,14 +101,14 @@ if ($conn && $hasFunctionRooms) {
                           AND t.status = 'Done'
                     ) AS last_cleaned_at
              FROM function_rooms fr
-             WHERE fr.is_active = 1 AND fr.status = 'Available'
+             WHERE fr.is_active = 1 AND fr.status = 'Available'{$eventHoldWhere}
              ORDER BY last_cleaned_at DESC, fr.base_rate ASC, fr.name ASC"
         );
     } else {
         $res = $conn->query(
             "SELECT id, name, capacity, base_rate, image_path, status, is_active, notes
              FROM function_rooms
-             WHERE is_active = 1 AND status = 'Available'
+             WHERE is_active = 1 AND status = 'Available'{$eventHoldWhere}
              ORDER BY base_rate ASC, name ASC"
         );
     }
@@ -375,6 +386,14 @@ if (Request::isPost() && $conn && $hasEvents) {
                     $m = $clientName . ' requested an event: ' . $title . '.';
                     $url = '/PHP/modules/events_conferences.php?edit_event_id=' . $eventIdNew;
                     $notifRepo->createForStaff($t, $m, $url);
+
+                    if ($userId > 0) {
+                        $t2 = 'Event request submitted';
+                        $ref = $eventNo;
+                        $m2 = $ref !== '' ? ('Your event ' . $ref . ' has been submitted for approval.') : 'Your event request has been submitted for approval.';
+                        $url2 = '/PHP/guest/reservations.php?tab=events';
+                        $notifRepo->createForUser($userId, $t2, $m2, $url2);
+                    }
 
                     Flash::set('success', 'Event request submitted. The front desk will confirm your booking.');
                     Response::redirect('events_conferences.php');

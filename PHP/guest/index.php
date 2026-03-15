@@ -10,14 +10,131 @@ $pendingApprovals = [];
 
 $conn = Database::getConnection();
 $guestId = (int)($_SESSION['guest_id'] ?? 0);
+$userId = (int)($_SESSION['user_id'] ?? 0);
 
 $recent = [];
+$recentEvents = [];
+$recentPosOrders = [];
+$recentActivity = [];
 $loyaltyPoints = null;
 $loyaltyTier = null;
+$guestEmail = '';
+$guestPhone = '';
 
 if ($conn && $guestId > 0) {
     $repo = new ReservationRepository($conn);
     $recent = $repo->listReservationsByGuestId($guestId, 10);
+
+    try {
+        $stmt = $conn->prepare('SELECT email, phone FROM guests WHERE id = ? LIMIT 1');
+        if ($stmt instanceof mysqli_stmt) {
+            $stmt->bind_param('i', $guestId);
+            $stmt->execute();
+            $g = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($g) {
+                $guestEmail = trim((string)($g['email'] ?? ''));
+                $guestPhone = preg_replace('/\D+/', '', (string)($g['phone'] ?? ''));
+            }
+        }
+    } catch (Throwable $e) {
+    }
+
+    try {
+        $dbRow = $conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $conn->real_escape_string($db);
+        if ($db !== '') {
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events'");
+            $hasEvents = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $eventsHasClientUserId = false;
+            $eventsHasClientGuestId = false;
+            if ($hasEvents) {
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_user_id'");
+                $eventsHasClientUserId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_guest_id'");
+                $eventsHasClientGuestId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            }
+
+            if ($hasEvents && ($eventsHasClientGuestId || $eventsHasClientUserId)) {
+                $sql =
+                    "SELECT e.id, e.event_no, e.title, e.event_date, e.status, e.created_at,
+                            fr.name AS function_room_name
+                     FROM events e
+                     LEFT JOIN function_rooms fr ON fr.id = e.function_room_id";
+                $where = [];
+                $types = '';
+                $params = [];
+                $or = [];
+                if ($eventsHasClientGuestId) {
+                    $or[] = 'e.client_guest_id = ?';
+                    $types .= 'i';
+                    $params[] = $guestId;
+                }
+                if ($eventsHasClientUserId && $userId > 0) {
+                    $or[] = 'e.client_user_id = ?';
+                    $types .= 'i';
+                    $params[] = $userId;
+                }
+                if ($guestEmail !== '') {
+                    $or[] = 'e.client_email = ?';
+                    $types .= 's';
+                    $params[] = $guestEmail;
+                }
+                if ($guestPhone !== '') {
+                    $or[] = 'REPLACE(REPLACE(REPLACE(e.client_phone, \'-\', \'\'), \' \', \'\'), \'+\', \'\') = ?';
+                    $types .= 's';
+                    $params[] = $guestPhone;
+                }
+                if (empty($or)) {
+                    $or[] = '1=0';
+                }
+                $where[] = '(' . implode(' OR ', $or) . ')';
+                $sql .= ' WHERE ' . implode(' AND ', $where) . ' ORDER BY e.id DESC LIMIT 10';
+
+                $stmt = $conn->prepare($sql);
+                if ($stmt instanceof mysqli_stmt) {
+                    if ($types !== '') {
+                        $bind = [];
+                        $bind[] = $types;
+                        foreach ($params as $k => $v) {
+                            $bind[] = &$params[$k];
+                        }
+                        call_user_func_array([$stmt, 'bind_param'], $bind);
+                    }
+                    $stmt->execute();
+                    $res2 = $stmt->get_result();
+                    while ($row = $res2->fetch_assoc()) {
+                        $recentEvents[] = $row;
+                    }
+                    $stmt->close();
+                }
+            }
+
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'pos_orders'");
+            $hasPosOrders = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            if ($hasPosOrders) {
+                $stmt = $conn->prepare(
+                    "SELECT id, order_no, order_type, status, total, created_at
+                     FROM pos_orders
+                     WHERE guest_id = ?
+                     ORDER BY id DESC
+                     LIMIT 10"
+                );
+                if ($stmt instanceof mysqli_stmt) {
+                    $stmt->bind_param('i', $guestId);
+                    $stmt->execute();
+                    $res3 = $stmt->get_result();
+                    while ($row = $res3->fetch_assoc()) {
+                        $recentPosOrders[] = $row;
+                    }
+                    $stmt->close();
+                }
+            }
+        }
+    } catch (Throwable $e) {
+    }
 
     try {
         $dbRow = $conn->query('SELECT DATABASE()');
@@ -43,6 +160,46 @@ if ($conn && $guestId > 0) {
     } catch (Throwable $e) {
     }
 }
+
+foreach ($recent as $row) {
+    $recentActivity[] = [
+        'type' => 'Reservation',
+        'ref' => (string)($row['reference_no'] ?? ''),
+        'name' => trim(((string)($row['room_no'] ?? '')) !== '' ? ('Room ' . (string)$row['room_no']) : ''),
+        'status' => (string)($row['status'] ?? ''),
+        'created_at' => (string)($row['created_at'] ?? ''),
+        'url' => ($APP_BASE_URL !== '' ? ($APP_BASE_URL . '/PHP/guest/deposit_slip.php?id=' . (int)($row['id'] ?? 0)) : ('/PHP/guest/deposit_slip.php?id=' . (int)($row['id'] ?? 0))),
+    ];
+}
+foreach ($recentEvents as $row) {
+    $recentActivity[] = [
+        'type' => 'Event',
+        'ref' => (string)($row['event_no'] ?? ''),
+        'name' => (string)($row['function_room_name'] ?? ''),
+        'status' => (string)($row['status'] ?? ''),
+        'created_at' => (string)($row['created_at'] ?? ''),
+        'url' => ($APP_BASE_URL !== '' ? ($APP_BASE_URL . '/PHP/guest/events_conferences.php') : '/PHP/guest/events_conferences.php'),
+    ];
+}
+foreach ($recentPosOrders as $row) {
+    $recentActivity[] = [
+        'type' => 'POS',
+        'ref' => (string)($row['order_no'] ?? ''),
+        'name' => (string)($row['order_type'] ?? ''),
+        'status' => (string)($row['status'] ?? ''),
+        'created_at' => (string)($row['created_at'] ?? ''),
+        'url' => '',
+    ];
+}
+
+usort($recentActivity, static function (array $a, array $b): int {
+    $ta = strtotime((string)($a['created_at'] ?? ''));
+    $tb = strtotime((string)($b['created_at'] ?? ''));
+    if ($ta === false) { $ta = 0; }
+    if ($tb === false) { $tb = 0; }
+    return $tb <=> $ta;
+});
+$recentActivity = array_slice($recentActivity, 0, 12);
 
 $pageTitle = 'Guest Portal - Hotel Management System';
 include __DIR__ . '/../partials/page_start.php';
@@ -95,35 +252,47 @@ include __DIR__ . '/../partials/sidebar.php';
 
                 <div class="bg-white rounded-xl border border-gray-100 p-6">
                     <div class="flex items-center justify-between gap-4 mb-4">
-                        <h3 class="text-lg font-medium text-gray-900">Recent reservations</h3>
-                        <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/guest/reservations.php" class="text-sm text-blue-600 hover:underline">View all</a>
+                        <h3 class="text-lg font-medium text-gray-900">Recent activity</h3>
+                        <div class="flex items-center gap-3">
+                            <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/guest/reservations.php" class="text-sm text-blue-600 hover:underline">Reservations</a>
+                            <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/guest/events_conferences.php" class="text-sm text-blue-600 hover:underline">Events</a>
+                        </div>
                     </div>
 
-                    <?php if (empty($recent)): ?>
-                        <div class="py-8 text-center text-gray-500 text-sm">No reservations yet. Browse rooms to request a booking.</div>
+                    <?php if (empty($recentActivity)): ?>
+                        <div class="py-8 text-center text-gray-500 text-sm">No recent activity yet.</div>
                     <?php else: ?>
-                        <div class="space-y-3">
-                            <?php foreach ($recent as $r): ?>
-                                <div class="rounded-lg border border-gray-100 p-4">
-                                    <div class="flex items-start justify-between gap-4">
-                                        <div>
-                                            <div class="text-xs text-gray-500">Reference</div>
-                                            <div class="text-sm font-semibold text-gray-900 mt-1"><?= htmlspecialchars((string)($r['reference_no'] ?? '')) ?></div>
-                                            <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($r['checkin_date'] ?? '')) ?> → <?= htmlspecialchars((string)($r['checkout_date'] ?? '')) ?></div>
-                                            <div class="text-xs text-gray-500 mt-1">
-                                                <?= htmlspecialchars(trim(((string)($r['room_no'] ?? '')) !== '' ? ('Room ' . (string)$r['room_no'] . ' • ') : '') . (string)($r['room_type_name'] ?? '')) ?>
-                                            </div>
-                                        </div>
-                                        <div class="text-right">
-                                            <div class="text-xs text-gray-500">Status</div>
-                                            <div class="text-sm font-medium text-gray-900 mt-1"><?= htmlspecialchars((string)($r['status'] ?? '')) ?></div>
-                                            <div class="mt-3 flex items-center gap-2 justify-end">
-                                                <a class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition" href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/guest/deposit_slip.php?id=<?= (int)($r['id'] ?? 0) ?>">Deposit slip</a>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
+                        <div class="overflow-auto rounded-lg border border-gray-100">
+                            <table class="min-w-full text-sm">
+                                <thead class="bg-gray-50 text-gray-600">
+                                    <tr>
+                                        <th class="text-left font-medium px-4 py-3">Type</th>
+                                        <th class="text-left font-medium px-4 py-3">Reference</th>
+                                        <th class="text-left font-medium px-4 py-3">Details</th>
+                                        <th class="text-left font-medium px-4 py-3">Status</th>
+                                        <th class="text-left font-medium px-4 py-3">Created</th>
+                                        <th class="text-right font-medium px-4 py-3">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">
+                                    <?php foreach ($recentActivity as $a): ?>
+                                        <tr class="hover:bg-gray-50">
+                                            <td class="px-4 py-3 text-gray-700"><?= htmlspecialchars((string)($a['type'] ?? '')) ?></td>
+                                            <td class="px-4 py-3 text-gray-700"><?= htmlspecialchars((string)($a['ref'] ?? '')) ?></td>
+                                            <td class="px-4 py-3 text-gray-700"><?= htmlspecialchars((string)($a['name'] ?? '')) ?></td>
+                                            <td class="px-4 py-3 text-gray-700"><?= htmlspecialchars((string)($a['status'] ?? '')) ?></td>
+                                            <td class="px-4 py-3 text-gray-700"><?= htmlspecialchars((string)($a['created_at'] ?? '')) ?></td>
+                                            <td class="px-4 py-3 text-right">
+                                                <?php if (trim((string)($a['url'] ?? '')) !== ''): ?>
+                                                    <a class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition" href="<?= htmlspecialchars((string)$a['url']) ?>">Open</a>
+                                                <?php else: ?>
+                                                    <span class="text-xs text-gray-400">-</span>
+                                                <?php endif; ?>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
                         </div>
                     <?php endif; ?>
                 </div>

@@ -105,6 +105,7 @@ include __DIR__ . '/../partials/sidebar.php';
 
                             $guestName = trim((string)($r['first_name'] ?? '') . ' ' . (string)($r['last_name'] ?? ''));
                             $roomLabel = ($r['room_no'] ?? '-') !== '' ? ('Room ' . ($r['room_no'] ?? '-')) : '-';
+                            $cleanToRaw = trim((string)($r['cleaning_task_scheduled_to'] ?? ''));
                         ?>
                         <div class="rounded-xl border border-gray-100 bg-white p-4">
                             <div class="flex items-start justify-between gap-3">
@@ -146,6 +147,16 @@ include __DIR__ . '/../partials/sidebar.php';
                                     </div>
                                 </div>
 
+                                <?php if ($cleanToRaw !== ''): ?>
+                                    <div class="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                                        <div class="text-xs text-blue-700">Room cleaning timer</div>
+                                        <div class="text-sm font-medium text-blue-900 mt-1">
+                                            Time left:
+                                            <span class="js-res-cleaning-countdown" data-scheduled-to="<?= htmlspecialchars($cleanToRaw, ENT_QUOTES) ?>">--:--:--</span>
+                                        </div>
+                                    </div>
+                                <?php endif; ?>
+
                                 <div class="grid grid-cols-2 gap-3">
                                     <div class="rounded-lg border border-gray-100 bg-gray-50 p-3">
                                         <div class="text-xs text-gray-500">Deposit</div>
@@ -169,4 +180,69 @@ include __DIR__ . '/../partials/sidebar.php';
         </div>
     </main>
 </section>
+<script>
+    (function () {
+        function parseDbDatetime(raw) {
+            if (!raw) return null;
+            var s = String(raw).trim();
+            if (!s) return null;
+            var m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+            if (m) {
+                var year = Number(m[1]);
+                var mon = Number(m[2]) - 1;
+                var day = Number(m[3]);
+                var hour = Number(m[4]);
+                var min = Number(m[5]);
+                var sec = Number(m[6]);
+                if (!isFinite(year) || !isFinite(mon) || !isFinite(day) || !isFinite(hour) || !isFinite(min) || !isFinite(sec)) return null;
+                return new Date(Date.UTC(year, mon, day, hour, min, sec));
+            }
+
+            var ms = Date.parse(s);
+            if (!isFinite(ms)) return null;
+            return new Date(ms);
+        }
+
+        function pad2(n) {
+            n = Math.floor(Math.max(0, n));
+            return (n < 10 ? '0' : '') + String(n);
+        }
+
+        function fmtLeft(msLeft) {
+            var total = Math.floor(msLeft / 1000);
+            var h = Math.floor(total / 3600);
+            var m = Math.floor((total % 3600) / 60);
+            var s = total % 60;
+            return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+        }
+
+        function tick() {
+            var els = document.querySelectorAll('.js-res-cleaning-countdown');
+            if (!els.length) return;
+            var now = Date.now();
+            var anyExpired = false;
+            els.forEach(function (el) {
+                var toRaw = el.getAttribute('data-scheduled-to') || '';
+                var toDt = parseDbDatetime(toRaw);
+                if (!toDt) {
+                    el.textContent = '--:--:--';
+                    return;
+                }
+                var left = toDt.getTime() - now;
+                if (left <= 0) {
+                    el.textContent = '00:00:00';
+                    anyExpired = true;
+                    return;
+                }
+                el.textContent = fmtLeft(left);
+            });
+            if (anyExpired) {
+                setTimeout(function () { window.location.reload(); }, 1200);
+            }
+        }
+
+        tick();
+        setInterval(tick, 1000);
+    })();
+</script>
 <?php include __DIR__ . '/../partials/page_end.php';

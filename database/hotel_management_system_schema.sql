@@ -93,19 +93,22 @@ CREATE TABLE IF NOT EXISTS rooms (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   room_no VARCHAR(20) NOT NULL UNIQUE,
   room_type_id INT UNSIGNED NOT NULL,
-  floor VARCHAR(10) NULL,
+  floor VARCHAR(20) NULL,
   image_path VARCHAR(255) NULL,
   lock_provider VARCHAR(40) NULL,
   lock_device_id VARCHAR(80) NULL,
   lock_status ENUM('Locked','Unlocked','Offline') NOT NULL DEFAULT 'Locked',
   lock_battery TINYINT UNSIGNED NULL,
   lock_last_sync_at DATETIME NULL,
-  status ENUM('Vacant','Occupied','Cleaning','Out of Order') NOT NULL DEFAULT 'Vacant',
+  status ENUM('Vacant','Occupied','Cleaning','Maintenance','Out of Order') NOT NULL DEFAULT 'Vacant',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_rooms_room_type
     FOREIGN KEY (room_type_id) REFERENCES room_types(id)
-    ON UPDATE CASCADE ON DELETE RESTRICT
+    ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+ALTER TABLE rooms
+  MODIFY COLUMN status ENUM('Vacant','Occupied','Cleaning','Maintenance','Out of Order') NOT NULL DEFAULT 'Vacant';
 
 CREATE TABLE IF NOT EXISTS room_lock_logs (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

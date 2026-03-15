@@ -7,6 +7,8 @@ final class MaintenanceRepository
     private ?mysqli $conn;
     private ?bool $hasRoomImageColumn = null;
     private ?bool $hasRoomTypeImageColumn = null;
+    private ?bool $hasFunctionRoomImageColumn = null;
+    private ?bool $hasAssetImageColumn = null;
     private ?bool $hasHousekeepingFunctionRoomColumn = null;
     private ?bool $hasMaintenanceFunctionRoomColumn = null;
     private ?bool $hasMaintenanceScheduledFromColumn = null;
@@ -193,6 +195,66 @@ final class MaintenanceRepository
         return $this->hasRoomTypeImageColumn;
     }
 
+    private function hasFunctionRoomImageColumn(): bool
+    {
+        if ($this->hasFunctionRoomImageColumn !== null) {
+            return $this->hasFunctionRoomImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasFunctionRoomImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasFunctionRoomImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'function_rooms'
+               AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasFunctionRoomImageColumn = ($count === 1);
+        return $this->hasFunctionRoomImageColumn;
+    }
+
+    private function hasAssetImageColumn(): bool
+    {
+        if ($this->hasAssetImageColumn !== null) {
+            return $this->hasAssetImageColumn;
+        }
+        if (!$this->conn) {
+            $this->hasAssetImageColumn = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasAssetImageColumn = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+               FROM INFORMATION_SCHEMA.COLUMNS
+              WHERE TABLE_SCHEMA = '{$db}'
+                AND TABLE_NAME = 'assets'
+                AND COLUMN_NAME = 'image_path'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasAssetImageColumn = ($count === 1);
+        return $this->hasAssetImageColumn;
+    }
+
     public function listRooms(string $q = ''): array
     {
         if (!$this->conn) {
@@ -351,19 +413,24 @@ final class MaintenanceRepository
         $rtImgSelect = $this->hasRoomTypeImageColumn() ? 'rt.image_path AS room_type_image_path,' : 'NULL AS room_type_image_path,';
 
         $hasFrCol = $this->hasMaintenanceFunctionRoomColumn();
-        $frSelect = $hasFrCol ? 't.function_room_id, fr.name AS function_room_name,' : 'NULL AS function_room_id, NULL AS function_room_name,';
+        $frImgSelect = ($hasFrCol && $this->hasFunctionRoomImageColumn()) ? 'fr.image_path AS function_room_image_path,' : 'NULL AS function_room_image_path,';
+        $frSelect = $hasFrCol ? 't.function_room_id, fr.name AS function_room_name, fr.status AS function_room_status,' : 'NULL AS function_room_id, NULL AS function_room_name, NULL AS function_room_status,';
         $frJoin = $hasFrCol ? 'LEFT JOIN function_rooms fr ON fr.id = t.function_room_id' : '';
+
+        $assetImgSelect = $this->hasAssetImageColumn() ? 'a.image_path AS asset_image_path,' : 'NULL AS asset_image_path,';
 
         $hasSchFrom = $this->hasMaintenanceScheduledFromColumn();
         $hasSchTo = $this->hasMaintenanceScheduledToColumn();
         $schSelect = ($hasSchFrom ? 't.scheduled_from' : 'NULL AS scheduled_from') . ', ' . ($hasSchTo ? 't.scheduled_to' : 'NULL AS scheduled_to') . ',';
 
         $sql = "SELECT t.id, t.ticket_no, t.status, t.priority, t.title, t.requires_downtime,
-                       t.room_id, r.room_no,
+                       t.room_id, r.room_no, r.status AS room_status,
                        {$frSelect}
+                       {$frImgSelect}
                        {$schSelect}
                        {$imgSelect}
                        {$rtImgSelect}
+                       {$assetImgSelect}
                        t.asset_id, a.asset_code,
                        c.name AS category_name,
                        t.assigned_to, u.username AS assigned_username,
@@ -383,9 +450,13 @@ final class MaintenanceRepository
         $params = [];
 
         if ($status !== '') {
-            $sql .= " AND t.status = ?";
-            $types .= 's';
-            $params[] = $status;
+            if ($status === '__active__') {
+                $sql .= " AND t.status IN ('Open','Assigned','In Progress','On Hold')";
+            } else {
+                $sql .= " AND t.status = ?";
+                $types .= 's';
+                $params[] = $status;
+            }
         }
 
         if ($priority !== '') {
@@ -610,17 +681,71 @@ final class MaintenanceRepository
         return ((int)($row['c'] ?? 0)) > 0;
     }
 
+    public function hasOpenMaintenanceForFunctionRoom(int $functionRoomId, int $excludeTicketId = 0): bool
+    {
+        if (!$this->conn) {
+            return false;
+        }
+        if ($functionRoomId <= 0) {
+            return false;
+        }
+        if (!$this->hasMaintenanceFunctionRoomColumn()) {
+            return false;
+        }
+
+        if ($excludeTicketId > 0) {
+            $stmt = $this->conn->prepare(
+                "SELECT COUNT(*) AS c
+                 FROM maintenance_tickets
+                 WHERE function_room_id = ?
+                   AND id <> ?
+                   AND status IN ('Open','Assigned','In Progress','On Hold')"
+            );
+            if (!$stmt) {
+                return false;
+            }
+            $stmt->bind_param('ii', $functionRoomId, $excludeTicketId);
+        } else {
+            $stmt = $this->conn->prepare(
+                "SELECT COUNT(*) AS c
+                 FROM maintenance_tickets
+                 WHERE function_room_id = ?
+                   AND status IN ('Open','Assigned','In Progress','On Hold')"
+            );
+            if (!$stmt) {
+                return false;
+            }
+            $stmt->bind_param('i', $functionRoomId);
+        }
+
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return ((int)($row['c'] ?? 0)) > 0;
+    }
+
     public function updateTicket(int $id, array $data): bool
     {
         if (!$this->conn) {
             return false;
         }
 
+        $hasSchFrom = $this->hasMaintenanceScheduledFromColumn();
+        $hasSchTo = $this->hasMaintenanceScheduledToColumn();
+
+        $set = "status = ?, assigned_to = ?, vendor_id = ?, category_id = ?, priority = ?, requires_downtime = ?,
+                 room_out_of_order_from = ?, room_out_of_order_to = ?,
+                 resolved_at = ?, closed_at = ?";
+        if ($hasSchFrom) {
+            $set .= ", scheduled_from = ?";
+        }
+        if ($hasSchTo) {
+            $set .= ", scheduled_to = ?";
+        }
+
         $stmt = $this->conn->prepare(
             "UPDATE maintenance_tickets
-             SET status = ?, assigned_to = ?, vendor_id = ?, requires_downtime = ?,
-                 room_out_of_order_from = ?, room_out_of_order_to = ?,
-                 resolved_at = ?, closed_at = ?
+             SET {$set}
              WHERE id = ?"
         );
         if (!$stmt) {
@@ -630,24 +755,47 @@ final class MaintenanceRepository
         $status = (string)($data['status'] ?? 'Open');
         $assignedTo = ($data['assigned_to'] ?? null);
         $vendorId = ($data['vendor_id'] ?? null);
+        $categoryId = ($data['category_id'] ?? null);
+        $priority = (string)($data['priority'] ?? 'Normal');
         $requiresDowntime = (int)($data['requires_downtime'] ?? 0);
         $downtimeFrom = $data['room_out_of_order_from'] ?? null;
         $downtimeTo = $data['room_out_of_order_to'] ?? null;
         $resolvedAt = $data['resolved_at'] ?? null;
         $closedAt = $data['closed_at'] ?? null;
 
-        $stmt->bind_param(
-            'siiissssi',
+        $scheduledFrom = $data['scheduled_from'] ?? null;
+        $scheduledTo = $data['scheduled_to'] ?? null;
+
+        $types = 'siiisissss';
+        $params = [
             $status,
             $assignedTo,
             $vendorId,
+            $categoryId,
+            $priority,
             $requiresDowntime,
             $downtimeFrom,
             $downtimeTo,
             $resolvedAt,
             $closedAt,
-            $id
-        );
+        ];
+        if ($hasSchFrom) {
+            $types .= 's';
+            $params[] = $scheduledFrom;
+        }
+        if ($hasSchTo) {
+            $types .= 's';
+            $params[] = $scheduledTo;
+        }
+        $types .= 'i';
+        $params[] = $id;
+
+        $bindParams = [];
+        $bindParams[] = $types;
+        foreach ($params as $k => $v) {
+            $bindParams[] = &$params[$k];
+        }
+        call_user_func_array([$stmt, 'bind_param'], $bindParams);
 
         $ok = $stmt->execute();
         $stmt->close();

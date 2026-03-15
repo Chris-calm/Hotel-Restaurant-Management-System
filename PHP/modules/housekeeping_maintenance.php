@@ -20,6 +20,8 @@ $maintenanceService = new MaintenanceService(
 
 $pendingApprovals = [];
 
+$errors = [];
+
 $APP_BASE_URL = App::baseUrl();
 
 $tab = (string)Request::get('tab', 'housekeeping');
@@ -33,17 +35,66 @@ foreach ($roomsAll as $r) {
     }
     $rooms[] = $r;
 }
-$tasks = $housekeepingService->listOpenTasks();
 
 $functionRooms = [];
 if ($conn) {
     $res = $conn->query("SELECT id, name, status FROM function_rooms WHERE is_active = 1 ORDER BY name ASC LIMIT 500");
     if ($res) {
         while ($row = $res->fetch_assoc()) {
+            $row['display_status'] = $row['status'] ?? '';
+            try {
+                $frId = (int)($row['id'] ?? 0);
+                if ($frId > 0) {
+                    $cur = trim((string)($row['status'] ?? ''));
+                    if (in_array($cur, ['Cleaning', 'Inspection'], true)) {
+                        $row['display_status'] = $cur;
+                    } else {
+                        $mRepo = new MaintenanceRepository($conn);
+                        $hasHk = $mRepo->hasOpenHousekeepingForFunctionRoom($frId);
+                        $hasMaint = $mRepo->hasOpenMaintenanceForFunctionRoom($frId, 0);
+                        $row['display_status'] = ($hasHk || $hasMaint) ? 'Maintenance' : 'Available';
+                    }
+                }
+            } catch (Throwable $e) {
+            }
             $functionRooms[] = $row;
         }
     }
 }
+
+if ($conn) {
+    try {
+        $hkRepo = new HousekeepingRepository($conn);
+        if ($hkRepo->supportsFunctionRoomsAndScheduling()) {
+            foreach ($functionRooms as $fr) {
+                $frId = (int)($fr['id'] ?? 0);
+                $st = trim((string)($fr['status'] ?? ''));
+                if ($frId <= 0) {
+                    continue;
+                }
+                if (!in_array($st, ['Cleaning', 'Inspection'], true)) {
+                    continue;
+                }
+                if ($hkRepo->hasOpenTasksForFunctionRoom($frId)) {
+                    continue;
+                }
+                $sf = date('Y-m-d H:i:s');
+                $housekeepingService->createFunctionRoomCleanupTask([
+                    'function_room_id' => $frId,
+                    'task_type' => $st,
+                    'status' => 'In Progress',
+                    'priority' => 'Normal',
+                    'scheduled_from' => $sf,
+                    'scheduled_to' => date('Y-m-d H:i:s', strtotime($sf . ' +1 hour')),
+                    'notes' => 'Auto-created because function room is in ' . $st . ' status.',
+                ], $errors);
+            }
+        }
+    } catch (Throwable $e) {
+    }
+}
+
+$tasks = $housekeepingService->listOpenTasks();
 
 $ticketStatus = (string)Request::get('ticket_status', '');
 $ticketPriority = (string)Request::get('ticket_priority', '');
@@ -56,7 +107,84 @@ $categories = [];
 $vendors = [];
 $users = [];
 
+$buildImageUrl = static function (string $path) use ($APP_BASE_URL): string {
+    $p = trim($path);
+    if ($p === '') {
+        return '';
+    }
+    if (preg_match('~^https?://~i', $p) === 1) {
+        return $p;
+    }
+    if (substr($p, 0, 1) === '/') {
+        return rtrim($APP_BASE_URL, '/') . $p;
+    }
+    return rtrim($APP_BASE_URL, '/') . '/' . ltrim($p, '/');
+};
+
 if ($tab === 'maintenance') {
+    if ($ticketStatus === '') {
+        $ticketStatus = '__active__';
+    }
+
+    if ($ticketStatus === '__all__') {
+        $ticketStatus = '';
+    }
+
+    if ($conn) {
+        try {
+            $categoryId = 0;
+            $res = $conn->query('SELECT id FROM maintenance_categories WHERE is_active = 1 ORDER BY id ASC LIMIT 1');
+            if ($res) {
+                $row = $res->fetch_assoc();
+                $categoryId = (int)($row['id'] ?? 0);
+            }
+
+            $due = [];
+            $rs = $conn->query("SELECT id, name FROM function_rooms WHERE is_active = 1 AND status = 'Maintenance' ORDER BY id ASC LIMIT 200");
+            if ($rs) {
+                while ($r = $rs->fetch_assoc()) {
+                    $due[] = $r;
+                }
+            }
+
+            foreach ($due as $fr) {
+                $frId = (int)($fr['id'] ?? 0);
+                if ($frId <= 0) continue;
+
+                $hasOpen = false;
+                $stChk = $conn->prepare("SELECT COUNT(*) AS c FROM maintenance_tickets WHERE function_room_id = ? AND status IN ('Open','Assigned','In Progress','On Hold')");
+                if ($stChk instanceof mysqli_stmt) {
+                    $stChk->bind_param('i', $frId);
+                    $stChk->execute();
+                    $row = $stChk->get_result()->fetch_assoc();
+                    $stChk->close();
+                    $hasOpen = ((int)($row['c'] ?? 0)) > 0;
+                }
+
+                if (!$hasOpen) {
+                    $tmpErrors = [];
+                    $sf = date('Y-m-d H:i:s');
+                    $st = date('Y-m-d H:i:s', strtotime($sf . ' +1 hour'));
+                    $maintenanceService->createTicket([
+                        'room_id' => 0,
+                        'function_room_id' => $frId,
+                        'asset_id' => 0,
+                        'category_id' => $categoryId,
+                        'priority' => 'High',
+                        'title' => 'Function room maintenance',
+                        'description' => 'Auto-created because function room is in Maintenance status.',
+                        'assigned_to' => 0,
+                        'vendor_id' => 0,
+                        'requires_downtime' => false,
+                        'scheduled_from' => $sf,
+                        'scheduled_to' => $st,
+                    ], $tmpErrors);
+                }
+            }
+        } catch (Throwable $e) {
+        }
+    }
+
     $tickets = $maintenanceService->listTickets([
         'status' => $ticketStatus,
         'priority' => $ticketPriority,
@@ -69,7 +197,9 @@ if ($tab === 'maintenance') {
     $users = $maintenanceService->listUsers();
 }
 
-$errors = [];
+if (!isset($errors) || !is_array($errors)) {
+    $errors = [];
+}
 
 if (Request::isPost()) {
     $action = (string)Request::post('action', '');
@@ -193,6 +323,63 @@ if (Request::isPost()) {
             'scheduled_to' => (string)Request::post('scheduled_to', ''),
         ];
 
+        $normDt = static function (string $raw): string {
+            $raw = trim($raw);
+            if ($raw === '') return '';
+            $ts = strtotime($raw);
+            if ($ts === false) {
+                return '';
+            }
+            return date('Y-m-d H:i:s', $ts);
+        };
+
+        $payload['scheduled_from'] = $normDt((string)($payload['scheduled_from'] ?? ''));
+        $payload['scheduled_to'] = $normDt((string)($payload['scheduled_to'] ?? ''));
+
+        if ($conn) {
+            try {
+                if ((int)($payload['category_id'] ?? 0) <= 0) {
+                    $res = $conn->query('SELECT id FROM maintenance_categories WHERE is_active = 1 ORDER BY id ASC LIMIT 1');
+                    if ($res) {
+                        $row = $res->fetch_assoc();
+                        $cid = (int)($row['id'] ?? 0);
+                        if ($cid > 0) {
+                            $payload['category_id'] = $cid;
+                        }
+                    }
+                }
+
+                $rid = (int)($payload['room_id'] ?? 0);
+                if ($rid > 0 && (int)($payload['asset_id'] ?? 0) <= 0) {
+                    $stA = $conn->prepare('SELECT id FROM assets WHERE room_id = ? AND is_active = 1 ORDER BY id ASC LIMIT 1');
+                    if ($stA instanceof mysqli_stmt) {
+                        $stA->bind_param('i', $rid);
+                        $stA->execute();
+                        $row = $stA->get_result()->fetch_assoc();
+                        $stA->close();
+                        $aid = (int)($row['id'] ?? 0);
+                        if ($aid > 0) {
+                            $payload['asset_id'] = $aid;
+                        }
+                    }
+                }
+            } catch (Throwable $e) {
+            }
+        }
+
+        $p = trim((string)($payload['priority'] ?? ''));
+        if ($p === '') {
+            $payload['priority'] = 'Normal';
+        }
+
+        $sf = trim((string)($payload['scheduled_from'] ?? ''));
+        $st = trim((string)($payload['scheduled_to'] ?? ''));
+        if ($st === '') {
+            $sf = $sf !== '' ? $sf : date('Y-m-d H:i:s');
+            $payload['scheduled_from'] = $sf;
+            $payload['scheduled_to'] = date('Y-m-d H:i:s', strtotime($sf . ' +1 hour'));
+        }
+
         $ticketId = $maintenanceService->createTicket($payload, $errors);
         if ($ticketId > 0) {
             try {
@@ -226,6 +413,42 @@ if (Request::isPost()) {
         $status = (string)Request::post('status', '');
         $ok = $maintenanceService->updateTicketStatus($ticketId, $status, $errors);
         if ($ok) {
+            $statusMsg = 'Ticket updated.';
+            if (in_array($status, ['Resolved', 'Closed', 'Cancelled'], true) && $conn) {
+                try {
+                    $repo = new MaintenanceRepository($conn);
+                    $ticket = $repo->findTicketById($ticketId);
+                    $frId = (int)($ticket['function_room_id'] ?? 0);
+                    if ($frId > 0) {
+                        $curStatus = '';
+                        $stmt = $conn->prepare('SELECT status FROM function_rooms WHERE id = ? LIMIT 1');
+                        if ($stmt instanceof mysqli_stmt) {
+                            $stmt->bind_param('i', $frId);
+                            $stmt->execute();
+                            $row = $stmt->get_result()->fetch_assoc();
+                            $stmt->close();
+                            $curStatus = trim((string)($row['status'] ?? ''));
+                        }
+
+                        if ($curStatus === 'Maintenance') {
+                            $hasHk = $repo->hasOpenHousekeepingForFunctionRoom($frId);
+                            $hasOtherMaint = $repo->hasOpenMaintenanceForFunctionRoom($frId, $ticketId);
+                            $why = [];
+                            if ($hasHk) {
+                                $why[] = 'open housekeeping tasks';
+                            }
+                            if ($hasOtherMaint) {
+                                $why[] = 'another open maintenance ticket';
+                            }
+                            if (!empty($why)) {
+                                $statusMsg .= ' Function room is still locked because there are ' . implode(' and ', $why) . '.';
+                            }
+                        }
+                    }
+                } catch (Throwable $e) {
+                }
+            }
+
             if (in_array($status, ['Resolved', 'Closed', 'Cancelled'], true)) {
                 try {
                     $notifRepo = new NotificationRepository($conn);
@@ -248,7 +471,7 @@ if (Request::isPost()) {
                 }
             }
 
-            Flash::set('success', 'Ticket updated.');
+            Flash::set('success', $statusMsg);
             Response::redirect('housekeeping_maintenance.php?tab=maintenance');
         }
     }
@@ -325,9 +548,20 @@ include __DIR__ . '/../partials/sidebar.php';
                 function parseDbDatetime(v) {
                     var s = String(v || '').trim();
                     if (!s) return null;
-                    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
-                        s = s.replace(' ', 'T');
+                    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+                    if (m) {
+                        var year = Number(m[1]);
+                        var mon = Number(m[2]) - 1;
+                        var day = Number(m[3]);
+                        var hour = Number(m[4]);
+                        var min = Number(m[5]);
+                        var sec = Number(m[6]);
+                        if (!isFinite(year) || !isFinite(mon) || !isFinite(day) || !isFinite(hour) || !isFinite(min) || !isFinite(sec)) {
+                            return null;
+                        }
+                        return new Date(Date.UTC(year, mon, day, hour, min, sec));
                     }
+
                     var ms = Date.parse(s);
                     if (!isFinite(ms)) {
                         return null;
@@ -480,7 +714,23 @@ include __DIR__ . '/../partials/sidebar.php';
                         }
                         var ticketId = Number(el.getAttribute('data-ticket-id') || 0);
                         var toRaw = el.getAttribute('data-scheduled-to') || '';
-                        var toDt = parseDbDatetime(toRaw);
+                        var fromRaw = el.getAttribute('data-scheduled-from') || '';
+                        var openedRaw = el.getAttribute('data-opened-at') || '';
+                        var durMins = Number(el.getAttribute('data-duration-min') || 0);
+                        var toDt = null;
+                        if (String(toRaw || '').trim() !== '') {
+                            toDt = parseDbDatetime(toRaw);
+                        } else if (durMins > 0) {
+                            var fd = parseDbDatetime(fromRaw);
+                            if (fd) {
+                                toDt = addMinutes(fd, durMins);
+                            } else {
+                                var od = parseDbDatetime(openedRaw);
+                                if (od) {
+                                    toDt = addMinutes(od, durMins);
+                                }
+                            }
+                        }
                         if (!toDt) {
                             el.textContent = '--:--:--';
                             return;
@@ -581,7 +831,7 @@ include __DIR__ . '/../partials/sidebar.php';
                             <div class="flex items-stretch">
                                 <div class="w-28 bg-gray-50 flex items-center justify-center">
                                     <?php if ($img !== ''): ?>
-                                        <img src="<?= htmlspecialchars($APP_BASE_URL . $img) ?>" alt="" style="height:100%;width:100%;object-fit:cover;" />
+                                        <img src="<?= htmlspecialchars($buildImageUrl($img)) ?>" alt="" style="height:100%;width:100%;object-fit:cover;" />
                                     <?php else: ?>
                                         <div class="text-xs text-gray-400">No image</div>
                                     <?php endif; ?>
@@ -638,7 +888,13 @@ include __DIR__ . '/../partials/sidebar.php';
                                             <button
                                                 type="button"
                                                 class="px-3 py-2 rounded-lg border border-red-200 text-red-700 text-xs hover:bg-red-50 transition"
-                                                onclick="openIssueModal(<?= (int)$t['room_id'] ?>, 'Room <?= htmlspecialchars((string)($t['room_no'] ?? ''), ENT_QUOTES) ?> - Issue Report')"
+                                                onclick="openIssueModal(<?= (int)$t['room_id'] ?>, 0, 'Room <?= htmlspecialchars((string)($t['room_no'] ?? ''), ENT_QUOTES) ?> - Issue Report')"
+                                            >Send to Maintenance</button>
+                                        <?php elseif ((int)($t['function_room_id'] ?? 0) > 0): ?>
+                                            <button
+                                                type="button"
+                                                class="px-3 py-2 rounded-lg border border-red-200 text-red-700 text-xs hover:bg-red-50 transition"
+                                                onclick="openIssueModal(0, <?= (int)$t['function_room_id'] ?>, 'Function Room <?= htmlspecialchars((string)($t['function_room_name'] ?? ''), ENT_QUOTES) ?> - Issue Report')"
                                             >Send to Maintenance</button>
                                         <?php endif; ?>
                                     </div>
@@ -682,7 +938,7 @@ include __DIR__ . '/../partials/sidebar.php';
                         <select name="function_room_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
                             <option value="0">Select Function Room</option>
                             <?php foreach ($functionRooms as $fr): ?>
-                                <option value="<?= (int)$fr['id'] ?>"><?= htmlspecialchars(($fr['name'] ?? '') . ' • ' . ($fr['status'] ?? '')) ?></option>
+                                <option value="<?= (int)$fr['id'] ?>"><?= htmlspecialchars(($fr['name'] ?? '') . ' • ' . ($fr['display_status'] ?? ($fr['status'] ?? ''))) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -743,6 +999,7 @@ include __DIR__ . '/../partials/sidebar.php';
                     <form method="post" class="mt-5 space-y-4">
                         <input type="hidden" name="action" value="create_maintenance_ticket" />
                         <input type="hidden" name="room_id" id="issue_room_id" value="0" />
+                        <input type="hidden" name="function_room_id" id="issue_function_room_id" value="0" />
                         <input type="hidden" name="asset_id" value="0" />
                         <input type="hidden" name="category_id" value="0" />
                         <input type="hidden" name="assigned_to" value="0" />
@@ -783,12 +1040,14 @@ include __DIR__ . '/../partials/sidebar.php';
         </div>
 
         <script>
-            function openIssueModal(roomId, title) {
+            function openIssueModal(roomId, functionRoomId, title) {
                 const el = document.getElementById('issueModal');
                 if (!el) return;
                 const rid = document.getElementById('issue_room_id');
+                const frid = document.getElementById('issue_function_room_id');
                 const t = document.getElementById('issue_title');
                 if (rid) rid.value = String(roomId || 0);
+                if (frid) frid.value = String(functionRoomId || 0);
                 if (t) t.value = title || '';
                 el.classList.remove('hidden');
                 el.classList.add('flex');
@@ -821,7 +1080,8 @@ include __DIR__ . '/../partials/sidebar.php';
                     <input type="hidden" name="tab" value="maintenance" />
                     <input name="ticket_q" value="<?= htmlspecialchars($ticketQ) ?>" placeholder="Search ticket/room/asset" class="border border-gray-200 rounded-lg px-3 py-2 text-sm md:col-span-5" />
                     <select name="ticket_status" class="border border-gray-200 rounded-lg px-3 py-2 text-sm md:col-span-3">
-                        <option value="">All Status</option>
+                        <option value="" <?= $ticketStatus === '__active__' ? 'selected' : '' ?>>Active Only</option>
+                        <option value="__all__" <?= $ticketStatus === '__all__' ? 'selected' : '' ?>>All Status</option>
                         <?php foreach (MaintenanceService::allowedStatuses() as $s): ?>
                             <option value="<?= htmlspecialchars($s) ?>" <?= $s === $ticketStatus ? 'selected' : '' ?>><?= htmlspecialchars($s) ?></option>
                         <?php endforeach; ?>
@@ -861,17 +1121,25 @@ include __DIR__ . '/../partials/sidebar.php';
                             }
 
                             $img = '';
-                            if (trim((string)($t['room_image_path'] ?? '')) !== '') {
-                                $img = (string)$t['room_image_path'];
-                            } elseif (trim((string)($t['room_type_image_path'] ?? '')) !== '') {
-                                $img = (string)$t['room_type_image_path'];
+                            if ((int)($t['asset_id'] ?? 0) > 0 && trim((string)($t['asset_image_path'] ?? '')) !== '') {
+                                $img = (string)$t['asset_image_path'];
+                            }
+                            if ($img === '' && (int)($t['function_room_id'] ?? 0) > 0 && trim((string)($t['function_room_image_path'] ?? '')) !== '') {
+                                $img = (string)$t['function_room_image_path'];
+                            }
+                            if ($img === '') {
+                                if (trim((string)($t['room_image_path'] ?? '')) !== '') {
+                                    $img = (string)$t['room_image_path'];
+                                } elseif (trim((string)($t['room_type_image_path'] ?? '')) !== '') {
+                                    $img = (string)$t['room_type_image_path'];
+                                }
                             }
                         ?>
                         <div class="rounded-2xl border border-gray-100 overflow-hidden bg-white">
                             <div class="flex items-stretch">
                                 <div class="w-28 lg:w-36 bg-gray-50 flex items-center justify-center">
                                     <?php if ($img !== ''): ?>
-                                        <img src="<?= htmlspecialchars($APP_BASE_URL . $img) ?>" alt="" style="height:100%;width:100%;object-fit:cover;" />
+                                        <img src="<?= htmlspecialchars($buildImageUrl($img)) ?>" alt="" style="height:100%;width:100%;object-fit:cover;" />
                                     <?php else: ?>
                                         <div class="text-xs text-gray-400">No image</div>
                                     <?php endif; ?>
@@ -902,13 +1170,29 @@ include __DIR__ . '/../partials/sidebar.php';
                                                     <?= htmlspecialchars(' • Asset ' . ($t['asset_code'] ?? '')) ?>
                                                 <?php endif; ?>
                                             </div>
-                                            <?php if ($tScheduledToRaw !== '' && in_array($tStatus, ['Open','Assigned','In Progress','On Hold'], true)): ?>
+                                            <?php
+                                                $targetStatus = '';
+                                                if (trim((string)($t['function_room_name'] ?? '')) !== '') {
+                                                    $targetStatus = trim((string)($t['function_room_status'] ?? ''));
+                                                } elseif (trim((string)($t['room_no'] ?? '')) !== '') {
+                                                    $targetStatus = trim((string)($t['room_status'] ?? ''));
+                                                }
+                                            ?>
+                                            <?php if ($targetStatus !== ''): ?>
+                                                <div class="text-xs text-gray-500 mt-1">
+                                                    Current status: <span class="font-medium text-gray-700"><?= htmlspecialchars($targetStatus) ?></span>
+                                                </div>
+                                            <?php endif; ?>
+                                            <?php if (in_array($tStatus, ['Open','Assigned','In Progress','On Hold'], true)): ?>
                                                 <div class="text-xs text-gray-500 mt-1">
                                                     Time left:
                                                     <span
                                                         class="js-ticket-countdown font-medium"
                                                         data-ticket-id="<?= (int)($t['id'] ?? 0) ?>"
                                                         data-scheduled-to="<?= htmlspecialchars($tScheduledToRaw, ENT_QUOTES) ?>"
+                                                        data-scheduled-from="<?= htmlspecialchars(trim((string)($t['scheduled_from'] ?? '')), ENT_QUOTES) ?>"
+                                                        data-opened-at="<?= htmlspecialchars(trim((string)($t['opened_at'] ?? '')), ENT_QUOTES) ?>"
+                                                        data-duration-min="60"
                                                     >--:--:--</span>
                                                 </div>
                                             <?php endif; ?>
@@ -959,31 +1243,30 @@ include __DIR__ . '/../partials/sidebar.php';
                                         </div>
                                     </div>
 
-                            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <form method="post" class="flex items-center gap-2">
-                                    <input type="hidden" name="action" value="maintenance_add_log" />
-                                    <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
-                                    <input name="message" placeholder="Add note" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs" />
-                                    <button class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Add</button>
-                                </form>
+                                    <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <form method="post" class="flex items-center gap-2">
+                                            <input type="hidden" name="action" value="maintenance_add_log" />
+                                            <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
+                                            <input name="message" placeholder="Add note" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs" />
+                                            <button class="px-3 py-2 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Add</button>
+                                        </form>
 
-                                <form method="post" class="grid grid-cols-5 gap-2" data-maint-cost-form="1">
-                                    <input type="hidden" name="action" value="maintenance_add_cost" />
-                                    <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
-                                    <select name="cost_type" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1 js-cost-type">
-                                        <?php foreach (MaintenanceService::allowedCostTypes() as $ct): ?>
-                                            <option value="<?= htmlspecialchars($ct) ?>"><?= htmlspecialchars($ct) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                    <input name="description" placeholder="Cost desc" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-2" />
-                                    <input name="qty" value="1" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1" />
-                                    <input name="unit_cost" value="0" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1 js-unit-cost" />
-                                    <div class="col-span-5 flex items-center justify-end">
-                                        <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Add Cost</button>
+                                        <form method="post" class="grid grid-cols-5 gap-2" data-maint-cost-form="1">
+                                            <input type="hidden" name="action" value="maintenance_add_cost" />
+                                            <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
+                                            <select name="cost_type" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1 js-cost-type">
+                                                <?php foreach (MaintenanceService::allowedCostTypes() as $ct): ?>
+                                                    <option value="<?= htmlspecialchars($ct) ?>"><?= htmlspecialchars($ct) ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                            <input name="description" placeholder="Cost desc" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-2" />
+                                            <input name="qty" value="1" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1" />
+                                            <input name="unit_cost" value="0" class="border border-gray-200 rounded-lg px-2 py-2 text-xs col-span-1 js-unit-cost" />
+                                            <div class="col-span-5 flex items-center justify-end">
+                                                <button class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs hover:bg-gray-50 transition">Add Cost</button>
+                                            </div>
+                                        </form>
                                     </div>
-                                </form>
-                            </div>
-                        </div>
                                 </div>
                             </div>
                         </div>
@@ -1015,7 +1298,7 @@ include __DIR__ . '/../partials/sidebar.php';
                         <select name="function_room_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
                             <option value="0">Select Function Room</option>
                             <?php foreach ($functionRooms as $fr): ?>
-                                <option value="<?= (int)$fr['id'] ?>"><?= htmlspecialchars(($fr['name'] ?? '') . ' • ' . ($fr['status'] ?? '')) ?></option>
+                                <option value="<?= (int)$fr['id'] ?>"><?= htmlspecialchars(($fr['name'] ?? '') . ' • ' . ($fr['display_status'] ?? ($fr['status'] ?? ''))) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>

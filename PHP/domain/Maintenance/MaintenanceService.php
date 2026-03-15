@@ -90,6 +90,10 @@ final class MaintenanceService
 
         $ticketNo = $this->generateTicketNo();
         $reportedBy = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+        $assignedTo = ((int)($data['assigned_to'] ?? 0)) ?: null;
+        if ($assignedTo === null && $reportedBy !== null && $reportedBy > 0) {
+            $assignedTo = $reportedBy;
+        }
 
         $roomOutOfOrderFrom = null;
         if ($requiresDowntime && $roomId > 0) {
@@ -107,7 +111,7 @@ final class MaintenanceService
             'title' => $title,
             'description' => (string)($data['description'] ?? ''),
             'reported_by' => $reportedBy,
-            'assigned_to' => ((int)($data['assigned_to'] ?? 0)) ?: null,
+            'assigned_to' => $assignedTo,
             'vendor_id' => ((int)($data['vendor_id'] ?? 0)) ?: null,
             'requires_downtime' => $requiresDowntime ? 1 : 0,
             'scheduled_from' => !empty($data['scheduled_from']) ? (string)$data['scheduled_from'] : null,
@@ -142,6 +146,29 @@ final class MaintenanceService
             ]);
         }
 
+        if ($id > 0 && !$requiresDowntime && $roomId > 0) {
+            $room = $this->roomRepo->findById($roomId);
+            $oldStatus = (string)($room['status'] ?? '');
+
+            $this->roomRepo->updateStatus($roomId, 'Maintenance');
+            $this->repo->addRoomStatusHistory([
+                'room_id' => $roomId,
+                'old_status' => $oldStatus,
+                'new_status' => 'Maintenance',
+                'source' => 'Maintenance',
+                'source_id' => $id,
+                'changed_by' => $reportedBy,
+            ]);
+
+            $this->repo->createLog([
+                'ticket_id' => $id,
+                'work_order_id' => null,
+                'log_type' => 'Status Change',
+                'message' => 'Room set to Maintenance.',
+                'created_by' => $reportedBy,
+            ]);
+        }
+
         return $id;
     }
 
@@ -160,16 +187,49 @@ final class MaintenanceService
             return false;
         }
 
+        $actorId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+
         $data = [
             'status' => $status,
             'assigned_to' => $ticket['assigned_to'] ?? null,
             'vendor_id' => $ticket['vendor_id'] ?? null,
+            'category_id' => $ticket['category_id'] ?? null,
+            'priority' => $ticket['priority'] ?? null,
             'requires_downtime' => (int)($ticket['requires_downtime'] ?? 0),
             'room_out_of_order_from' => $ticket['room_out_of_order_from'] ?? null,
             'room_out_of_order_to' => $ticket['room_out_of_order_to'] ?? null,
             'resolved_at' => $ticket['resolved_at'] ?? null,
             'closed_at' => $ticket['closed_at'] ?? null,
+            'scheduled_from' => $ticket['scheduled_from'] ?? null,
+            'scheduled_to' => $ticket['scheduled_to'] ?? null,
         ];
+
+        if ((empty($data['assigned_to']) || (int)$data['assigned_to'] <= 0) && $actorId !== null && $actorId > 0) {
+            $data['assigned_to'] = $actorId;
+        }
+
+        $p = trim((string)($data['priority'] ?? ''));
+        if ($p === '') {
+            $data['priority'] = 'Normal';
+        }
+
+        if (empty($data['category_id']) || (int)$data['category_id'] <= 0) {
+            $cats = $this->repo->listCategories();
+            if (!empty($cats)) {
+                $cid = (int)($cats[0]['id'] ?? 0);
+                if ($cid > 0) {
+                    $data['category_id'] = $cid;
+                }
+            }
+        }
+
+        $st = trim((string)($data['scheduled_to'] ?? ''));
+        if ($st === '') {
+            $sf = trim((string)($data['scheduled_from'] ?? ''));
+            $sf = $sf !== '' ? $sf : date('Y-m-d H:i:s');
+            $data['scheduled_from'] = $sf;
+            $data['scheduled_to'] = date('Y-m-d H:i:s', strtotime($sf . ' +1 hour'));
+        }
 
         if ($status === 'Resolved' && empty($data['resolved_at'])) {
             $data['resolved_at'] = date('Y-m-d H:i:s');
@@ -192,7 +252,7 @@ final class MaintenanceService
         $functionRoomId = (int)($ticket['function_room_id'] ?? 0);
         if ($functionRoomId > 0) {
             if (in_array($status, ['Resolved', 'Closed', 'Cancelled'], true)) {
-                if (!$this->repo->hasOpenHousekeepingForFunctionRoom($functionRoomId)) {
+                if (!$this->repo->hasOpenHousekeepingForFunctionRoom($functionRoomId) && !$this->repo->hasOpenMaintenanceForFunctionRoom($functionRoomId, $ticketId)) {
                     $this->repo->updateFunctionRoomStatus($functionRoomId, 'Available');
                 }
             } else {
@@ -200,7 +260,6 @@ final class MaintenanceService
             }
         }
 
-        $actorId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
         $this->repo->createLog([
             'ticket_id' => $ticketId,
             'work_order_id' => null,
@@ -209,8 +268,27 @@ final class MaintenanceService
             'created_by' => $actorId,
         ]);
 
+        $roomId = (int)($ticket['room_id'] ?? 0);
+        $requiresDowntime = (int)($ticket['requires_downtime'] ?? 0) === 1;
+        if ($roomId > 0 && !$requiresDowntime) {
+            if (in_array($status, ['Resolved', 'Closed', 'Cancelled'], true)) {
+                $room = $this->roomRepo->findById($roomId);
+                $oldStatus = (string)($room['status'] ?? '');
+                $this->roomRepo->updateStatus($roomId, 'Vacant');
+                $this->repo->addRoomStatusHistory([
+                    'room_id' => $roomId,
+                    'old_status' => $oldStatus,
+                    'new_status' => 'Vacant',
+                    'source' => 'Maintenance',
+                    'source_id' => $ticketId,
+                    'changed_by' => $actorId,
+                ]);
+            } else {
+                $this->roomRepo->updateStatus($roomId, 'Maintenance');
+            }
+        }
+
         if ($status === 'Closed' && (int)($ticket['requires_downtime'] ?? 0) === 1) {
-            $roomId = (int)($ticket['room_id'] ?? 0);
             if ($roomId > 0) {
                 $room = $this->roomRepo->findById($roomId);
                 $oldStatus = (string)($room['status'] ?? '');

@@ -12,6 +12,7 @@ final class ReservationRepository
     private ?bool $hasGuestLoyaltyColumns = null;
     private ?bool $hasPromoCodesTable = null;
     private ?bool $hasHousekeepingCompletedAt = null;
+    private ?bool $hasHousekeepingScheduleColumns = null;
 
     public function __construct(?mysqli $conn)
     {
@@ -45,6 +46,36 @@ final class ReservationRepository
         );
         $this->hasHousekeepingCompletedAt = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
         return $this->hasHousekeepingCompletedAt;
+    }
+
+    private function hasHousekeepingScheduleColumns(): bool
+    {
+        if ($this->hasHousekeepingScheduleColumns !== null) {
+            return $this->hasHousekeepingScheduleColumns;
+        }
+        if (!$this->conn) {
+            $this->hasHousekeepingScheduleColumns = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasHousekeepingScheduleColumns = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'housekeeping_tasks'
+               AND COLUMN_NAME IN ('scheduled_to','source_type','source_id')"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasHousekeepingScheduleColumns = ($count === 3);
+        return $this->hasHousekeepingScheduleColumns;
     }
 
     public function listReservationsByGuestId(int $guestId, int $limit = 50): array
@@ -820,12 +851,38 @@ final class ReservationRepository
             ? 'r.promo_code, r.discount_amount,'
             : 'NULL AS promo_code, 0 AS discount_amount,';
 
+        $hkSelect = $this->hasHousekeepingScheduleColumns()
+            ? "(
+                    SELECT t.id
+                    FROM housekeeping_tasks t
+                    WHERE t.room_id = rooms.id
+                      AND t.task_type = 'Cleaning'
+                      AND t.status IN ('Open','In Progress')
+                      AND t.source_type = 'Reservation'
+                      AND t.source_id = r.id
+                    ORDER BY t.id DESC
+                    LIMIT 1
+                ) AS cleaning_task_id,
+                (
+                    SELECT t.scheduled_to
+                    FROM housekeeping_tasks t
+                    WHERE t.room_id = rooms.id
+                      AND t.task_type = 'Cleaning'
+                      AND t.status IN ('Open','In Progress')
+                      AND t.source_type = 'Reservation'
+                      AND t.source_id = r.id
+                    ORDER BY t.id DESC
+                    LIMIT 1
+                ) AS cleaning_task_scheduled_to,"
+            : "NULL AS cleaning_task_id, NULL AS cleaning_task_scheduled_to,";
+
         $sql =
             "SELECT r.id, r.reference_no, r.status, r.checkin_date, r.checkout_date,
                     {$promoSelect}
                     r.deposit_amount, r.payment_method, r.created_at,
                     g.first_name, g.last_name, g.phone, g.email,
                     {$guestIdentitySelect}
+                    {$hkSelect}
                     rooms.room_no,
                     rt.name AS room_type_name
              FROM reservations r

@@ -372,13 +372,21 @@ final class ReservationService
         $createdBy = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
         $ref = (string)($reservation['reference_no'] ?? '');
 
+        $sf = date('Y-m-d H:i:s');
+        $st = date('Y-m-d H:i:s', strtotime($sf . ' +1 hour'));
+
         $this->housekeepingRepo->createTask([
             'room_id' => $roomId,
+            'function_room_id' => null,
             'task_type' => 'Cleaning',
             'status' => 'Open',
             'priority' => 'Normal',
             'assigned_to' => null,
             'created_by' => $createdBy,
+            'scheduled_from' => $sf,
+            'scheduled_to' => $st,
+            'source_type' => 'Reservation',
+            'source_id' => $reservationId,
             'notes' => $ref !== '' ? ('Auto-created on checkout (' . $ref . ').') : 'Auto-created on checkout.',
         ]);
 

@@ -6,12 +6,55 @@ require_once __DIR__ . '/../core/bootstrap.php';
 require_once __DIR__ . '/../domain/Rooms/RoomRepository.php';
 require_once __DIR__ . '/../domain/Housekeeping/HousekeepingRepository.php';
 require_once __DIR__ . '/../domain/Housekeeping/HousekeepingService.php';
+require_once __DIR__ . '/../domain/Maintenance/MaintenanceRepository.php';
+require_once __DIR__ . '/../domain/Maintenance/MaintenanceService.php';
 
 $conn = Database::getConnection();
 
 $pendingApprovals = [];
 
 $pageTitle = 'Events & Conferences - Hotel Management System';
+$maintenanceService = null;
+
+if ($conn) {
+    try {
+        $dbRow = $conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $conn->real_escape_string($db);
+        if ($db !== '') {
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'maintenance_tickets'");
+            $hasMaint = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            if ($hasMaint) {
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'maintenance_tickets' AND COLUMN_NAME IN ('id','status','scheduled_to','function_room_id')");
+                $hasCols = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+                if ($hasCols === 4) {
+                    $maintenanceService = new MaintenanceService(new MaintenanceRepository($conn), new RoomRepository($conn));
+
+                    $dueIds = [];
+                    $q = "SELECT id FROM maintenance_tickets
+                          WHERE scheduled_to IS NOT NULL
+                            AND scheduled_to <= NOW()
+                            AND status IN ('Open','Assigned','In Progress','On Hold')
+                          ORDER BY scheduled_to ASC
+                          LIMIT 50";
+                    $r = $conn->query($q);
+                    if ($r) {
+                        while ($row = $r->fetch_assoc()) {
+                            $dueIds[] = (int)($row['id'] ?? 0);
+                        }
+                    }
+
+                    foreach ($dueIds as $tid) {
+                        if ($tid <= 0) continue;
+                        $tmpErrors = [];
+                        $maintenanceService->updateTicketStatus($tid, 'Resolved', $tmpErrors);
+                    }
+                }
+            }
+        }
+    } catch (Throwable $e) {
+    }
+}
 $extraHeadHtml = <<<'HTML'
 <style>
     #content {
@@ -462,6 +505,7 @@ if (Request::isPost() && $conn) {
         $status = (string)Request::post('status', 'Available');
         $active = ((string)Request::post('is_active', '1') === '1') ? 1 : 0;
         $notes = (string)Request::post('notes', '');
+        $prevStatus = '';
 
         if ($roomId <= 0) {
             $errors['general'] = 'Invalid function room.';
@@ -476,6 +520,7 @@ if (Request::isPost() && $conn) {
                     $row = $stLock->get_result()->fetch_assoc();
                     $stLock->close();
                     $curStatus = (string)($row['status'] ?? '');
+                    $prevStatus = $curStatus;
                     if (in_array($curStatus, ['Cleaning', 'Inspection', 'Maintenance'], true)) {
                         $errors['general'] = 'Function room cannot be edited while it is in ' . $curStatus . ' status.';
                     }
@@ -561,6 +606,57 @@ if (Request::isPost() && $conn) {
                     $ok = $stmt->execute();
                     $stmt->close();
                     if ($ok) {
+                        if ($status === 'Maintenance' && $prevStatus !== 'Maintenance' && $conn) {
+                            try {
+                                $svc = $maintenanceService;
+                                if (!$svc) {
+                                    $svc = new MaintenanceService(new MaintenanceRepository($conn), new RoomRepository($conn));
+                                }
+
+                                $hasOpen = false;
+                                $stChk = $conn->prepare(
+                                    "SELECT COUNT(*) AS c
+                                     FROM maintenance_tickets
+                                     WHERE function_room_id = ?
+                                       AND status IN ('Open','Assigned','In Progress','On Hold')"
+                                );
+                                if ($stChk instanceof mysqli_stmt) {
+                                    $stChk->bind_param('i', $roomId);
+                                    $stChk->execute();
+                                    $r = $stChk->get_result()->fetch_assoc();
+                                    $stChk->close();
+                                    $hasOpen = ((int)($r['c'] ?? 0)) > 0;
+                                }
+
+                                if (!$hasOpen && $svc instanceof MaintenanceService) {
+                                    $scheduledFrom = date('Y-m-d H:i:s');
+                                    $scheduledTo = date('Y-m-d H:i:s', strtotime($scheduledFrom . ' +1 hour'));
+                                    $categoryId = 0;
+                                    $res = $conn->query('SELECT id FROM maintenance_categories WHERE is_active = 1 ORDER BY id ASC LIMIT 1');
+                                    if ($res) {
+                                        $row = $res->fetch_assoc();
+                                        $categoryId = (int)($row['id'] ?? 0);
+                                    }
+                                    $tmpErrors = [];
+                                    $svc->createTicket([
+                                        'room_id' => 0,
+                                        'function_room_id' => $roomId,
+                                        'asset_id' => 0,
+                                        'category_id' => $categoryId,
+                                        'priority' => 'High',
+                                        'title' => 'Function room maintenance',
+                                        'description' => 'Auto-created from Events & Conferences (status set to Maintenance).',
+                                        'assigned_to' => 0,
+                                        'vendor_id' => 0,
+                                        'requires_downtime' => false,
+                                        'scheduled_from' => $scheduledFrom,
+                                        'scheduled_to' => $scheduledTo,
+                                    ], $tmpErrors);
+                                }
+                            } catch (Throwable $e) {
+                            }
+                        }
+
                         Flash::set('success', 'Function room updated.');
                         Response::redirect('events_conferences.php');
                     }
@@ -572,6 +668,57 @@ if (Request::isPost() && $conn) {
                     $ok = $stmt->execute();
                     $stmt->close();
                     if ($ok) {
+                        if ($status === 'Maintenance' && $prevStatus !== 'Maintenance' && $conn) {
+                            try {
+                                $svc = $maintenanceService;
+                                if (!$svc) {
+                                    $svc = new MaintenanceService(new MaintenanceRepository($conn), new RoomRepository($conn));
+                                }
+
+                                $hasOpen = false;
+                                $stChk = $conn->prepare(
+                                    "SELECT COUNT(*) AS c
+                                     FROM maintenance_tickets
+                                     WHERE function_room_id = ?
+                                       AND status IN ('Open','Assigned','In Progress','On Hold')"
+                                );
+                                if ($stChk instanceof mysqli_stmt) {
+                                    $stChk->bind_param('i', $roomId);
+                                    $stChk->execute();
+                                    $r = $stChk->get_result()->fetch_assoc();
+                                    $stChk->close();
+                                    $hasOpen = ((int)($r['c'] ?? 0)) > 0;
+                                }
+
+                                if (!$hasOpen && $svc instanceof MaintenanceService) {
+                                    $scheduledFrom = date('Y-m-d H:i:s');
+                                    $scheduledTo = date('Y-m-d H:i:s', strtotime($scheduledFrom . ' +1 hour'));
+                                    $categoryId = 0;
+                                    $res = $conn->query('SELECT id FROM maintenance_categories WHERE is_active = 1 ORDER BY id ASC LIMIT 1');
+                                    if ($res) {
+                                        $row = $res->fetch_assoc();
+                                        $categoryId = (int)($row['id'] ?? 0);
+                                    }
+                                    $tmpErrors = [];
+                                    $svc->createTicket([
+                                        'room_id' => 0,
+                                        'function_room_id' => $roomId,
+                                        'asset_id' => 0,
+                                        'category_id' => $categoryId,
+                                        'priority' => 'High',
+                                        'title' => 'Function room maintenance',
+                                        'description' => 'Auto-created from Events & Conferences (status set to Maintenance).',
+                                        'assigned_to' => 0,
+                                        'vendor_id' => 0,
+                                        'requires_downtime' => false,
+                                        'scheduled_from' => $scheduledFrom,
+                                        'scheduled_to' => $scheduledTo,
+                                    ], $tmpErrors);
+                                }
+                            } catch (Throwable $e) {
+                            }
+                        }
+
                         Flash::set('success', 'Function room updated.');
                         Response::redirect('events_conferences.php');
                     }

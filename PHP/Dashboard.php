@@ -164,6 +164,9 @@ $outOfStockItems = 0;
 $inStockItems = 0;
 
 $recentReservations = [];
+$recentEvents = [];
+$recentPosOrders = [];
+$recentActivity = [];
 
 $reservationTrend = [3, 7, 5, 10, 8, 12];
 $restaurantActivity = [12, 9, 4];
@@ -225,6 +228,88 @@ if ($conn) {
                 $recentReservations[] = $row;
             }
         }
+
+        $dbRow = $conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $conn->real_escape_string($db);
+
+        if ($db !== '') {
+            $resHasEvents = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events'");
+            $hasEvents = $resHasEvents ? ((int)($resHasEvents->fetch_row()[0] ?? 0) === 1) : false;
+            if ($hasEvents) {
+                $result = $conn->query(
+                    "SELECT e.event_no,
+                            e.client_name,
+                            e.status,
+                            e.created_at
+                     FROM events e
+                     ORDER BY e.created_at DESC
+                     LIMIT 5"
+                );
+                if ($result) {
+                    while ($row = $result->fetch_assoc()) {
+                        $recentEvents[] = $row;
+                    }
+                }
+            }
+
+            $resHasPos = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'pos_orders'");
+            $hasPosOrders = $resHasPos ? ((int)($resHasPos->fetch_row()[0] ?? 0) === 1) : false;
+            if ($hasPosOrders) {
+                $result = $conn->query(
+                    "SELECT o.order_no,
+                            o.order_type,
+                            o.status,
+                            o.total,
+                            o.created_at
+                     FROM pos_orders o
+                     ORDER BY o.created_at DESC
+                     LIMIT 5"
+                );
+                if ($result) {
+                    while ($row = $result->fetch_assoc()) {
+                        $recentPosOrders[] = $row;
+                    }
+                }
+            }
+        }
+
+        foreach ($recentReservations as $row) {
+            $recentActivity[] = [
+                'ref' => (string)($row['reference_no'] ?? ''),
+                'name' => (string)($row['guest_name'] ?? ''),
+                'status' => (string)($row['status'] ?? ''),
+                'created_at' => (string)($row['created_at'] ?? ''),
+                'type' => 'Reservation',
+            ];
+        }
+        foreach ($recentEvents as $row) {
+            $recentActivity[] = [
+                'ref' => (string)($row['event_no'] ?? ''),
+                'name' => (string)($row['client_name'] ?? ''),
+                'status' => (string)($row['status'] ?? ''),
+                'created_at' => (string)($row['created_at'] ?? ''),
+                'type' => 'Event',
+            ];
+        }
+        foreach ($recentPosOrders as $row) {
+            $recentActivity[] = [
+                'ref' => (string)($row['order_no'] ?? ''),
+                'name' => (string)($row['order_type'] ?? ''),
+                'status' => (string)($row['status'] ?? ''),
+                'created_at' => (string)($row['created_at'] ?? ''),
+                'type' => 'POS',
+            ];
+        }
+
+        usort($recentActivity, static function (array $a, array $b): int {
+            $ta = strtotime((string)($a['created_at'] ?? ''));
+            $tb = strtotime((string)($b['created_at'] ?? ''));
+            if ($ta === false) { $ta = 0; }
+            if ($tb === false) { $tb = 0; }
+            return $tb <=> $ta;
+        });
+        $recentActivity = array_slice($recentActivity, 0, 8);
     } catch (Throwable $e) {
     }
 }
@@ -255,12 +340,12 @@ if (!$conn || !$hasRealData) {
     $reservationTrend = [6, 11, 8, 14, 12, 18];
     $restaurantActivity = [41, 32, 8];
 
-    $recentReservations = [
-        ['reference_no' => 'RES-2026-0012', 'guest_name' => 'Juan Dela Cruz', 'status' => 'Confirmed', 'created_at' => date('Y-m-d H:i:s', strtotime('-1 day'))],
-        ['reference_no' => 'RES-2026-0011', 'guest_name' => 'Maria Santos', 'status' => 'Upcoming', 'created_at' => date('Y-m-d H:i:s', strtotime('-2 day'))],
-        ['reference_no' => 'RES-2026-0010', 'guest_name' => 'John Doe', 'status' => 'Checked In', 'created_at' => date('Y-m-d H:i:s', strtotime('-3 day'))],
-        ['reference_no' => 'RES-2026-0009', 'guest_name' => 'Jane Smith', 'status' => 'Completed', 'created_at' => date('Y-m-d H:i:s', strtotime('-4 day'))],
-        ['reference_no' => 'RES-2026-0008', 'guest_name' => 'Alex Reyes', 'status' => 'Cancelled', 'created_at' => date('Y-m-d H:i:s', strtotime('-5 day'))],
+    $recentActivity = [
+        ['ref' => 'RES-2026-0012', 'name' => 'Juan Dela Cruz', 'status' => 'Confirmed', 'created_at' => date('Y-m-d H:i:s', strtotime('-1 day')), 'type' => 'Reservation'],
+        ['ref' => 'EVT-20260315-000001', 'name' => 'Maria Santos', 'status' => 'Inquiry', 'created_at' => date('Y-m-d H:i:s', strtotime('-10 hours')), 'type' => 'Event'],
+        ['ref' => 'POS-2026-0041', 'name' => 'Dine In', 'status' => 'Paid', 'created_at' => date('Y-m-d H:i:s', strtotime('-8 hours')), 'type' => 'POS'],
+        ['ref' => 'RES-2026-0011', 'name' => 'Maria Santos', 'status' => 'Upcoming', 'created_at' => date('Y-m-d H:i:s', strtotime('-2 day')), 'type' => 'Reservation'],
+        ['ref' => 'RES-2026-0010', 'name' => 'John Doe', 'status' => 'Checked In', 'created_at' => date('Y-m-d H:i:s', strtotime('-3 day')), 'type' => 'Reservation'],
     ];
 
     $pendingApprovals = [
@@ -536,30 +621,32 @@ include __DIR__ . '/partials/sidebar.php';
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 bottom-sections">
             <div class="bg-white rounded-lg border border-gray-100 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100">
-                    <h3 class="text-lg font-medium text-gray-900">Recent Reservations</h3>
+                    <h3 class="text-lg font-medium text-gray-900">Recent Activity</h3>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full">
                         <thead class="bg-gray-50">
                             <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reference</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Guest</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
-                            <?php if (empty($recentReservations)): ?>
+                            <?php if (empty($recentActivity)): ?>
                                 <tr>
-                                    <td colspan="4" class="px-6 py-8 text-center text-gray-500">No recent reservations found.</td>
+                                    <td colspan="5" class="px-6 py-8 text-center text-gray-500">No recent activity found.</td>
                                 </tr>
                             <?php else: ?>
-                                <?php foreach ($recentReservations as $res): ?>
+                                <?php foreach ($recentActivity as $res): ?>
                                     <tr class="hover:bg-gray-50">
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"><?= htmlspecialchars($res['reference_no'] ?? 'N/A') ?></td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($res['guest_name'] ?? 'N/A') ?></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($res['type'] ?? 'N/A') ?></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"><?= htmlspecialchars($res['ref'] ?? 'N/A') ?></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($res['name'] ?? 'N/A') ?></td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($res['status'] ?? 'N/A') ?></td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= !empty($res['created_at']) ? date('M j, Y', strtotime($res['created_at'])) : 'N/A' ?></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= !empty($res['created_at']) ? date('M j, Y', strtotime((string)$res['created_at'])) : 'N/A' ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php endif; ?>
