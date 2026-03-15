@@ -78,11 +78,17 @@ if (Request::isPost()) {
     if (empty($errors)) {
         unset($_SESSION['pending_2fa_user_id']);
 
+        if (isset($_SESSION['guest_id'])) {
+            $_SESSION['guest_id'] = 0;
+        }
+
         $_SESSION['user_id'] = (int)($user['id'] ?? 0);
         $_SESSION['username'] = (string)($user['username'] ?? '');
         $_SESSION['role'] = (string)($user['role'] ?? '');
         if ($hasUsersGuestIdColumn) {
             $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+        } else {
+            unset($_SESSION['guest_id']);
         }
 
         if ($remember) {

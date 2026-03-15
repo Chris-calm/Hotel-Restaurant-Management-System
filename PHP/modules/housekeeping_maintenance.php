@@ -717,6 +717,7 @@ include __DIR__ . '/../partials/sidebar.php';
                         var fromRaw = el.getAttribute('data-scheduled-from') || '';
                         var openedRaw = el.getAttribute('data-opened-at') || '';
                         var durMins = Number(el.getAttribute('data-duration-min') || 0);
+                        var stName = String(el.getAttribute('data-ticket-status') || '').trim();
                         var toDt = null;
                         if (String(toRaw || '').trim() !== '') {
                             toDt = parseDbDatetime(toRaw);
@@ -737,6 +738,35 @@ include __DIR__ . '/../partials/sidebar.php';
                         }
 
                         var left = toDt.getTime() - now;
+
+                        if (ticketId > 0) {
+                            var holdKey = 'maint_ticket_hold_left_' + String(ticketId);
+                            if (stName === 'On Hold') {
+                                var stored = null;
+                                try {
+                                    stored = window.localStorage.getItem(holdKey);
+                                } catch (e) {
+                                    stored = null;
+                                }
+                                if (stored === null || stored === '') {
+                                    try {
+                                        window.localStorage.setItem(holdKey, String(Math.max(0, left)));
+                                    } catch (e) {
+                                    }
+                                    stored = String(Math.max(0, left));
+                                }
+                                var frozenLeft = Number(stored || 0);
+                                if (!isFinite(frozenLeft) || frozenLeft < 0) frozenLeft = 0;
+                                el.textContent = fmtLeft(frozenLeft);
+                                return;
+                            } else {
+                                try {
+                                    window.localStorage.removeItem(holdKey);
+                                } catch (e) {
+                                }
+                            }
+                        }
+
                         if (left <= 0) {
                             el.textContent = '00:00:00';
                             if (ticketId > 0) {
@@ -1192,6 +1222,7 @@ include __DIR__ . '/../partials/sidebar.php';
                                                         data-scheduled-to="<?= htmlspecialchars($tScheduledToRaw, ENT_QUOTES) ?>"
                                                         data-scheduled-from="<?= htmlspecialchars(trim((string)($t['scheduled_from'] ?? '')), ENT_QUOTES) ?>"
                                                         data-opened-at="<?= htmlspecialchars(trim((string)($t['opened_at'] ?? '')), ENT_QUOTES) ?>"
+                                                        data-ticket-status="<?= htmlspecialchars($tStatus, ENT_QUOTES) ?>"
                                                         data-duration-min="60"
                                                     >--:--:--</span>
                                                 </div>
@@ -1214,6 +1245,8 @@ include __DIR__ . '/../partials/sidebar.php';
                                                 <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>" />
                                                 <select name="status" class="border border-gray-200 rounded-lg px-2 py-1 text-xs">
                                                     <?php foreach (MaintenanceService::allowedStatuses() as $s): ?>
+                                                        <?php if ($s === 'Open') continue; ?>
+                                                        <?php if ($s === 'Assigned') continue; ?>
                                                         <option value="<?= htmlspecialchars($s) ?>" <?= $s === ($t['status'] ?? '') ? 'selected' : '' ?>><?= htmlspecialchars($s) ?></option>
                                                     <?php endforeach; ?>
                                                 </select>

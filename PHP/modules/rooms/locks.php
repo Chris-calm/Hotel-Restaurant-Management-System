@@ -67,6 +67,7 @@ $flash = Flash::get();
 
 $today = date('Y-m-d');
 $unlockEligibleRoomIds = [];
+$activeReservationByRoomId = [];
 if ($conn) {
     $statusSql = "('Confirmed','Upcoming','Checked In')";
     $stmt = $conn->prepare(
@@ -74,8 +75,7 @@ if ($conn) {
          FROM reservation_rooms rr
          INNER JOIN reservations r ON r.id = rr.reservation_id
          WHERE r.status IN {$statusSql}
-           AND r.checkin_date <= ?
-           AND r.checkout_date > ?"
+           AND (r.status = 'Checked In' OR (r.checkin_date <= ? AND r.checkout_date > ?))"
     );
     if ($stmt instanceof mysqli_stmt) {
         $stmt->bind_param('ss', $today, $today);
@@ -85,6 +85,35 @@ if ($conn) {
             $rid = (int)($row['room_id'] ?? 0);
             if ($rid > 0) {
                 $unlockEligibleRoomIds[$rid] = true;
+            }
+        }
+        $stmt->close();
+    }
+
+    $stmt = $conn->prepare(
+        "SELECT rr.room_id,
+                r.id AS reservation_id,
+                r.reference_no,
+                r.status,
+                r.checkin_date,
+                r.checkout_date,
+                g.first_name,
+                g.last_name
+           FROM reservation_rooms rr
+           INNER JOIN reservations r ON r.id = rr.reservation_id
+           LEFT JOIN guests g ON g.id = r.guest_id
+          WHERE r.status IN {$statusSql}
+            AND (r.status = 'Checked In' OR (r.checkin_date <= ? AND r.checkout_date > ?))
+          ORDER BY r.id DESC"
+    );
+    if ($stmt instanceof mysqli_stmt) {
+        $stmt->bind_param('ss', $today, $today);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $rid = (int)($row['room_id'] ?? 0);
+            if ($rid > 0 && !isset($activeReservationByRoomId[$rid])) {
+                $activeReservationByRoomId[$rid] = $row;
             }
         }
         $stmt->close();
@@ -137,8 +166,7 @@ if (Request::isPost() && (string)Request::post('action', '') === 'lock_action') 
              INNER JOIN reservations r ON r.id = rr.reservation_id
              WHERE rr.room_id = ?
                AND r.status IN {$statusSql}
-               AND r.checkin_date <= ?
-               AND r.checkout_date > ?
+               AND (r.status = 'Checked In' OR (r.checkin_date <= ? AND r.checkout_date > ?))
              ORDER BY r.id DESC
              LIMIT 1"
         );
@@ -271,6 +299,11 @@ include __DIR__ . '/../../partials/sidebar.php';
         <?php endif; ?>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <?php if (empty($rooms)): ?>
+                <div class="sm:col-span-2 lg:col-span-4 bg-white rounded-lg border border-gray-100 p-10 text-center text-gray-500">
+                    No rooms match this filter.
+                </div>
+            <?php else: ?>
             <?php foreach ($rooms as $r): ?>
                 <?php
                     $imgPath = trim((string)($r['image_path'] ?? ''));
@@ -297,6 +330,16 @@ include __DIR__ . '/../../partials/sidebar.php';
 
                     $isEligible = isset($unlockEligibleRoomIds[(int)($r['id'] ?? 0)]);
                     $eligClass = $isEligible ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-700';
+
+                    $active = null;
+                    $rid = (int)($r['id'] ?? 0);
+                    if ($rid > 0 && isset($activeReservationByRoomId[$rid])) {
+                        $active = $activeReservationByRoomId[$rid];
+                    }
+                    $guestName = '';
+                    if (is_array($active)) {
+                        $guestName = trim((string)($active['first_name'] ?? '') . ' ' . (string)($active['last_name'] ?? ''));
+                    }
                 ?>
                 <div class="bg-white rounded-lg border border-gray-100 overflow-hidden">
                     <div class="h-36 bg-gray-50 flex items-center justify-center">
@@ -322,6 +365,19 @@ include __DIR__ . '/../../partials/sidebar.php';
                             </span>
                         </div>
 
+                        <div class="mt-3 text-xs text-gray-500">Active Booking:</div>
+                        <?php if (is_array($active)): ?>
+                            <div class="mt-1 text-xs text-gray-700">
+                                <?= htmlspecialchars((string)($active['reference_no'] ?? '')) ?>
+                                <?= $guestName !== '' ? (' • ' . htmlspecialchars($guestName)) : '' ?>
+                            </div>
+                            <div class="mt-1 text-xs text-gray-500">
+                                Status: <?= htmlspecialchars((string)($active['status'] ?? '')) ?>
+                            </div>
+                        <?php else: ?>
+                            <div class="mt-1 text-xs text-gray-400">None</div>
+                        <?php endif; ?>
+
                         <div class="mt-3 text-xs text-gray-500">Lock Provider: <?= htmlspecialchars($provider !== '' ? $provider : 'simulator') ?></div>
                         <div class="mt-1 text-xs text-gray-500">Device ID: <?= htmlspecialchars($deviceId !== '' ? $deviceId : ('sim-' . (int)$r['id'])) ?></div>
                         <div class="mt-1 text-xs text-gray-500">Battery: <?= $battery === null || $battery === '' ? '—' : (int)$battery . '%' ?></div>
@@ -345,6 +401,7 @@ include __DIR__ . '/../../partials/sidebar.php';
                     </div>
                 </div>
             <?php endforeach; ?>
+            <?php endif; ?>
         </div>
     </main>
 </section>

@@ -2144,7 +2144,7 @@ include __DIR__ . '/../partials/sidebar.php';
 
             <div class="bg-white rounded-lg border border-gray-100 p-6 lg:col-span-2">
                 <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-medium text-gray-900">All Events (Recent)</h3>
+                    <h3 class="text-lg font-medium text-gray-900">All Events</h3>
                     <div class="text-xs text-gray-500">Pipeline + schedule</div>
                 </div>
                 <?php if (!$hasEvents): ?>
@@ -2152,15 +2152,29 @@ include __DIR__ . '/../partials/sidebar.php';
                 <?php else: ?>
                     <?php
                         $eventsRecent = [];
+                        $eventsView = trim((string)Request::get('events_view', 'recent'));
+                        if (!in_array($eventsView, ['recent', 'archived'], true)) {
+                            $eventsView = 'recent';
+                        }
+
                         if ($conn) {
                             $eventImageSelect = $hasEventImageColumn ? 'e.image_path' : 'NULL AS image_path';
                             $functionRoomImageSelect = $hasFunctionRoomImageColumn ? 'fr.image_path AS function_room_image_path' : 'NULL AS function_room_image_path';
+
+                            $where = "";
+                            if ($eventsView === 'recent') {
+                                $where = "WHERE e.status NOT IN ('Completed','Cancelled')";
+                            } else {
+                                $where = "WHERE e.status IN ('Completed','Cancelled')";
+                            }
+
                             $res = $conn->query(
                                 "SELECT e.id, e.event_no, e.title, {$eventImageSelect}, e.client_name, e.client_phone, e.client_email, e.event_date, e.start_time, e.end_time,
                                         e.expected_guests, e.deposit_amount, e.status, e.estimated_total, e.notes,
                                         fr.name AS function_room_name, fr.status AS function_room_status, {$functionRoomImageSelect}
                                  FROM events e
                                  LEFT JOIN function_rooms fr ON fr.id = e.function_room_id
+                                 {$where}
                                  ORDER BY e.id DESC
                                  LIMIT 15"
                             );
@@ -2171,8 +2185,12 @@ include __DIR__ . '/../partials/sidebar.php';
                             }
                         }
                     ?>
+                    <div class="mb-3 flex items-center gap-2">
+                        <a href="events_conferences.php?events_view=recent" class="px-3 py-2 rounded-lg border text-sm <?= $eventsView === 'recent' ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 hover:bg-gray-50' ?>">Recent</a>
+                        <a href="events_conferences.php?events_view=archived" class="px-3 py-2 rounded-lg border text-sm <?= $eventsView === 'archived' ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 hover:bg-gray-50' ?>">Archived</a>
+                    </div>
                     <?php if (empty($eventsRecent)): ?>
-                        <div class="text-sm text-gray-500">No events yet.</div>
+                        <div class="text-sm text-gray-500">No events found.</div>
                     <?php else: ?>
                         <div class="overflow-auto rounded-lg border border-gray-100">
                             <table class="min-w-full text-sm">

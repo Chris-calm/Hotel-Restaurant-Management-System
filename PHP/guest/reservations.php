@@ -51,19 +51,36 @@ if ($conn && $guestId > 0) {
 
             $eventsHasClientUserId = false;
             $eventsHasClientGuestId = false;
+            $eventsHasClientEmail = false;
+            $eventsHasClientPhone = false;
+            $hasFunctionRooms = false;
             if ($hasEvents) {
                 $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_user_id'");
                 $eventsHasClientUserId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
                 $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_guest_id'");
                 $eventsHasClientGuestId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_email'");
+                $eventsHasClientEmail = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_phone'");
+                $eventsHasClientPhone = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'function_rooms'");
+                $hasFunctionRooms = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
             }
 
-            if ($hasEvents && ($eventsHasClientGuestId || $eventsHasClientUserId)) {
-                $sql =
-                    "SELECT e.id, e.event_no, e.title, e.event_date, e.start_time, e.end_time, e.expected_guests, e.status, e.estimated_total, e.deposit_amount,
-                            fr.name AS function_room_name
-                     FROM events e
-                     LEFT JOIN function_rooms fr ON fr.id = e.function_room_id";
+            if ($hasEvents) {
+                if ($hasFunctionRooms) {
+                    $sql =
+                        "SELECT e.id, e.event_no, e.title, e.event_date, e.start_time, e.end_time, e.expected_guests, e.status, e.estimated_total, e.deposit_amount,
+                                fr.name AS function_room_name
+                         FROM events e
+                         LEFT JOIN function_rooms fr ON fr.id = e.function_room_id";
+                } else {
+                    $sql =
+                        "SELECT e.id, e.event_no, e.title, e.event_date, e.start_time, e.end_time, e.expected_guests, e.status, e.estimated_total, e.deposit_amount,
+                                NULL AS function_room_name
+                         FROM events e";
+                }
                 $where = [];
                 $types = '';
                 $params = [];
@@ -78,15 +95,37 @@ if ($conn && $guestId > 0) {
                     $types .= 'i';
                     $params[] = $userId;
                 }
-                if ($guestEmail !== '') {
-                    $or[] = 'e.client_email = ?';
-                    $types .= 's';
-                    $params[] = $guestEmail;
-                }
-                if ($guestPhone !== '') {
-                    $or[] = 'REPLACE(REPLACE(REPLACE(e.client_phone, \'-\', \'\'), \' \', \'\'), \'+\', \'\') = ?';
-                    $types .= 's';
-                    $params[] = $guestPhone;
+                if ($eventsHasClientEmail || $eventsHasClientPhone) {
+                    $canCheckIds = ($eventsHasClientGuestId || $eventsHasClientUserId);
+                    $idGuard = $canCheckIds ? 'COALESCE(e.client_guest_id,0) = 0 AND COALESCE(e.client_user_id,0) = 0 AND ' : '';
+
+                    if ($guestEmail !== '' && $guestPhone !== '' && $eventsHasClientEmail && $eventsHasClientPhone) {
+                        $or[] = "({$idGuard}e.client_email = ? AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.client_phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '') = ?)";
+                        $types .= 'ss';
+                        $params[] = $guestEmail;
+                        $params[] = $guestPhone;
+
+                        $or[] = "(e.client_email = ? AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.client_phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '') = ?)";
+                        $types .= 'ss';
+                        $params[] = $guestEmail;
+                        $params[] = $guestPhone;
+                    } elseif ($guestEmail !== '' && $eventsHasClientEmail) {
+                        $or[] = "({$idGuard}e.client_email = ?)";
+                        $types .= 's';
+                        $params[] = $guestEmail;
+
+                        $or[] = "(e.client_email = ?)";
+                        $types .= 's';
+                        $params[] = $guestEmail;
+                    } elseif ($guestPhone !== '' && $eventsHasClientPhone) {
+                        $or[] = "({$idGuard}REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.client_phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '') = ?)";
+                        $types .= 's';
+                        $params[] = $guestPhone;
+
+                        $or[] = "(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.client_phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '') = ?)";
+                        $types .= 's';
+                        $params[] = $guestPhone;
+                    }
                 }
                 if (empty($or)) {
                     $or[] = '1=0';

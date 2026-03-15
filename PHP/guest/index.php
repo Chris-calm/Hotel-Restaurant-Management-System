@@ -77,13 +77,17 @@ if ($conn && $guestId > 0) {
                     $types .= 'i';
                     $params[] = $userId;
                 }
-                if ($guestEmail !== '') {
-                    $or[] = 'e.client_email = ?';
+                if ($guestEmail !== '' && $guestPhone !== '') {
+                    $or[] = "(COALESCE(e.client_guest_id,0) = 0 AND COALESCE(e.client_user_id,0) = 0 AND e.client_email = ? AND REPLACE(REPLACE(REPLACE(e.client_phone, '-', ''), ' ', ''), '+', '') = ?)";
+                    $types .= 'ss';
+                    $params[] = $guestEmail;
+                    $params[] = $guestPhone;
+                } elseif ($guestEmail !== '') {
+                    $or[] = "(COALESCE(e.client_guest_id,0) = 0 AND COALESCE(e.client_user_id,0) = 0 AND e.client_email = ?)";
                     $types .= 's';
                     $params[] = $guestEmail;
-                }
-                if ($guestPhone !== '') {
-                    $or[] = 'REPLACE(REPLACE(REPLACE(e.client_phone, \'-\', \'\'), \' \', \'\'), \'+\', \'\') = ?';
+                } elseif ($guestPhone !== '') {
+                    $or[] = "(COALESCE(e.client_guest_id,0) = 0 AND COALESCE(e.client_user_id,0) = 0 AND REPLACE(REPLACE(REPLACE(e.client_phone, '-', ''), ' ', ''), '+', '') = ?)";
                     $types .= 's';
                     $params[] = $guestPhone;
                 }

@@ -66,6 +66,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $hash = (string)($user['password_hash'] ?? '');
         if ($hash !== '' && password_verify($password, $hash)) {
 
+            if (isset($_SESSION['guest_id'])) {
+                $_SESSION['guest_id'] = 0;
+            }
+
             $isGuest = ((string)($user['role'] ?? '') === 'guest');
 
             if ($isGuest && $hasUser2faTable) {
@@ -148,6 +152,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         $_SESSION['role'] = $user['role'];
                         if ($hasUsersGuestIdColumn) {
                             $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+                        } else {
+                            unset($_SESSION['guest_id']);
                         }
                         
                         $otp_stmt->close();
@@ -168,6 +174,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     $_SESSION['role'] = $user['role'];
                     if ($hasUsersGuestIdColumn) {
                         $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+                    } else {
+                        unset($_SESSION['guest_id']);
                     }
                     
                     $otp_stmt->close();
@@ -188,6 +196,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 $_SESSION['role'] = $user['role'];
                 if ($hasUsersGuestIdColumn) {
                     $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+                } else {
+                    unset($_SESSION['guest_id']);
                 }
                 
                 $stmt->close();

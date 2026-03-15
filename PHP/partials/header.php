@@ -95,6 +95,7 @@ if ($hasNotificationsFallback && empty($pendingApprovals) && $conn) {
     $headerNotificationCount = count($pendingApprovals);
 }
 $currentUri = (string)($_SERVER['REQUEST_URI'] ?? '');
+$currentRole = (string)($_SESSION['role'] ?? 'staff');
 ?>
 <div class="popup-overlay" id="popupOverlay"></div>
 
@@ -131,6 +132,8 @@ $currentUri = (string)($_SERVER['REQUEST_URI'] ?? '');
                             $nid = (int)($n['id'] ?? 0);
                             $nUrl = trim((string)($n['url'] ?? ''));
                             if ($nUrl === '') {
+                                $nUrl = '#';
+                            } elseif ($currentRole !== 'guest' && strpos($nUrl, '/PHP/guest/') === 0) {
                                 $nUrl = '#';
                             } elseif (substr($nUrl, 0, 1) === '/') {
                                 $nUrl = $APP_BASE_URL . $nUrl;

@@ -107,7 +107,7 @@ final class MaintenanceService
             'asset_id' => $assetId > 0 ? $assetId : null,
             'category_id' => ((int)($data['category_id'] ?? 0)) ?: null,
             'priority' => $priority,
-            'status' => 'Open',
+            'status' => 'In Progress',
             'title' => $title,
             'description' => (string)($data['description'] ?? ''),
             'reported_by' => $reportedBy,
@@ -175,6 +175,10 @@ final class MaintenanceService
     public function updateTicketStatus(int $ticketId, string $status, array &$errors): bool
     {
         $errors = [];
+
+        if ($status === 'Open') {
+            $status = 'In Progress';
+        }
 
         if (!Validator::inArray($status, self::allowedStatuses())) {
             $errors['status'] = 'Status is invalid.';

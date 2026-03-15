@@ -79,12 +79,18 @@ if (Request::isPost()) {
                         if ($user) {
                             unset($_SESSION['pending_otp_user_id'], $_SESSION['pending_otp_username']);
 
+                            if (isset($_SESSION['guest_id'])) {
+                                $_SESSION['guest_id'] = 0;
+                            }
+
                             $_SESSION['user_id'] = (int)$user['id'];
                             $_SESSION['username'] = (string)$user['username'];
                             $_SESSION['role'] = (string)$user['role'];
 
                             if ($hasUsersGuestIdColumn) {
                                 $_SESSION['guest_id'] = (int)($user['guest_id'] ?? 0);
+                            } else {
+                                unset($_SESSION['guest_id']);
                             }
 
                             if ((string)($user['role'] ?? '') === 'guest') {

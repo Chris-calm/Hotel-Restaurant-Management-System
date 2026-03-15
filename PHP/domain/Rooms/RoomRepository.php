@@ -7,10 +7,40 @@ final class RoomRepository
     private ?mysqli $conn;
     private ?bool $hasImageColumn = null;
     private ?bool $hasLockColumns = null;
+    private ?bool $hasRoomTypesTable = null;
 
     public function __construct(?mysqli $conn)
     {
         $this->conn = $conn;
+    }
+
+    private function hasRoomTypesTable(): bool
+    {
+        if ($this->hasRoomTypesTable !== null) {
+            return $this->hasRoomTypesTable;
+        }
+        if (!$this->conn) {
+            $this->hasRoomTypesTable = false;
+            return false;
+        }
+
+        $dbRow = $this->conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $this->conn->real_escape_string($db);
+        if ($db === '') {
+            $this->hasRoomTypesTable = false;
+            return false;
+        }
+
+        $res = $this->conn->query(
+            "SELECT COUNT(*)
+             FROM INFORMATION_SCHEMA.TABLES
+             WHERE TABLE_SCHEMA = '{$db}'
+               AND TABLE_NAME = 'room_types'"
+        );
+        $count = $res ? (int)($res->fetch_row()[0] ?? 0) : 0;
+        $this->hasRoomTypesTable = ($count === 1);
+        return $this->hasRoomTypesTable;
     }
 
     private function hasLockColumns(): bool
@@ -86,12 +116,20 @@ final class RoomRepository
                 ? "r.lock_provider, r.lock_device_id, r.lock_status, r.lock_battery, r.lock_last_sync_at"
                 : "NULL AS lock_provider, NULL AS lock_device_id, NULL AS lock_status, NULL AS lock_battery, NULL AS lock_last_sync_at";
 
-            $sql = "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
-                           {$lockSelect},
-                           rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
-                    FROM rooms r
-                    JOIN room_types rt ON rt.id = r.room_type_id
-                    ORDER BY r.room_no ASC LIMIT 500";
+            if ($this->hasRoomTypesTable()) {
+                $sql = "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                               {$lockSelect},
+                               rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
+                        FROM rooms r
+                        LEFT JOIN room_types rt ON rt.id = r.room_type_id
+                        ORDER BY r.room_no ASC LIMIT 500";
+            } else {
+                $sql = "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                               {$lockSelect},
+                               NULL as room_type_code, NULL as room_type_name, NULL as base_rate
+                        FROM rooms r
+                        ORDER BY r.room_no ASC LIMIT 500";
+            }
             $res = $this->conn->query($sql);
             if (!$res) {
                 return [];
@@ -109,19 +147,35 @@ final class RoomRepository
             ? "r.lock_provider, r.lock_device_id, r.lock_status, r.lock_battery, r.lock_last_sync_at"
             : "NULL AS lock_provider, NULL AS lock_device_id, NULL AS lock_status, NULL AS lock_battery, NULL AS lock_last_sync_at";
 
-        $stmt = $this->conn->prepare(
-            "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
-                    {$lockSelect},
-                    rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
-             FROM rooms r
-             JOIN room_types rt ON rt.id = r.room_type_id
-             WHERE r.room_no LIKE ? OR r.floor LIKE ? OR rt.code LIKE ? OR rt.name LIKE ? OR r.status LIKE ?
-             ORDER BY r.room_no ASC LIMIT 500"
-        );
+        if ($this->hasRoomTypesTable()) {
+            $stmt = $this->conn->prepare(
+                "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                        {$lockSelect},
+                        rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
+                 FROM rooms r
+                 LEFT JOIN room_types rt ON rt.id = r.room_type_id
+                 WHERE r.room_no LIKE ? OR r.floor LIKE ? OR rt.code LIKE ? OR rt.name LIKE ? OR r.status LIKE ?
+                 ORDER BY r.room_no ASC LIMIT 500"
+            );
+        } else {
+            $stmt = $this->conn->prepare(
+                "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                        {$lockSelect},
+                        NULL as room_type_code, NULL as room_type_name, NULL as base_rate
+                 FROM rooms r
+                 WHERE r.room_no LIKE ? OR r.floor LIKE ? OR r.status LIKE ?
+                 ORDER BY r.room_no ASC LIMIT 500"
+            );
+        }
         if (!$stmt) {
             return [];
         }
-        $stmt->bind_param('sssss', $like, $like, $like, $like, $like);
+
+        if ($this->hasRoomTypesTable()) {
+            $stmt->bind_param('sssss', $like, $like, $like, $like, $like);
+        } else {
+            $stmt->bind_param('sss', $like, $like, $like);
+        }
         $stmt->execute();
         $res = $stmt->get_result();
         $rows = [];
@@ -142,14 +196,24 @@ final class RoomRepository
             ? "r.lock_provider, r.lock_device_id, r.lock_status, r.lock_battery, r.lock_last_sync_at"
             : "NULL AS lock_provider, NULL AS lock_device_id, NULL AS lock_status, NULL AS lock_battery, NULL AS lock_last_sync_at";
 
-        $stmt = $this->conn->prepare(
-            "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
-                    {$lockSelect},
-                    rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
-             FROM rooms r
-             JOIN room_types rt ON rt.id = r.room_type_id
-             WHERE r.id = ?"
-        );
+        if ($this->hasRoomTypesTable()) {
+            $stmt = $this->conn->prepare(
+                "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                        {$lockSelect},
+                        rt.code as room_type_code, rt.name as room_type_name, rt.base_rate
+                 FROM rooms r
+                 LEFT JOIN room_types rt ON rt.id = r.room_type_id
+                 WHERE r.id = ?"
+            );
+        } else {
+            $stmt = $this->conn->prepare(
+                "SELECT r.id, r.room_no, r.floor, r.status, r.room_type_id, {$imgSelect},
+                        {$lockSelect},
+                        NULL as room_type_code, NULL as room_type_name, NULL as base_rate
+                 FROM rooms r
+                 WHERE r.id = ?"
+            );
+        }
         if (!$stmt) {
             return null;
         }

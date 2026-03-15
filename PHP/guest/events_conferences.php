@@ -23,6 +23,9 @@ $hasFunctionRooms = false;
 $hasEvents = false;
 $hasClientUserId = false;
 $hasClientGuestId = false;
+$hasClientEmail = false;
+$hasClientPhone = false;
+$hasFunctionRoomsTable = false;
 
 if ($conn) {
     try {
@@ -32,6 +35,7 @@ if ($conn) {
         if ($db !== '') {
             $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'function_rooms'");
             $hasFunctionRooms = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            $hasFunctionRoomsTable = $hasFunctionRooms;
             $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events'");
             $hasEvents = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
 
@@ -44,6 +48,15 @@ if ($conn) {
                     "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_guest_id'"
                 );
                 $hasClientGuestId = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+                $res = $conn->query(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_email'"
+                );
+                $hasClientEmail = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+                $res = $conn->query(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'events' AND COLUMN_NAME = 'client_phone'"
+                );
+                $hasClientPhone = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
             }
         }
     } catch (Throwable $e) {
@@ -121,26 +134,74 @@ if ($conn && $hasFunctionRooms) {
 
 $myEvents = [];
 if ($conn && $hasEvents) {
-    $sql =
-        "SELECT e.id, e.event_no, e.title, e.event_date, e.start_time, e.end_time, e.expected_guests, e.status, e.estimated_total, e.deposit_amount,
-                fr.name AS function_room_name
-         FROM events e
-         LEFT JOIN function_rooms fr ON fr.id = e.function_room_id";
+    $guestEmail = '';
+    $guestPhone = '';
+    try {
+        $stmt = $conn->prepare('SELECT email, phone FROM guests WHERE id = ? LIMIT 1');
+        if ($stmt instanceof mysqli_stmt) {
+            $stmt->bind_param('i', $guestId);
+            $stmt->execute();
+            $g = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($g) {
+                $guestEmail = trim((string)($g['email'] ?? ''));
+                $guestPhone = preg_replace('/\D+/', '', (string)($g['phone'] ?? ''));
+            }
+        }
+    } catch (Throwable $e) {
+    }
+
+    if ($hasFunctionRoomsTable) {
+        $sql =
+            "SELECT e.id, e.event_no, e.title, e.event_date, e.start_time, e.end_time, e.expected_guests, e.status, e.estimated_total, e.deposit_amount,
+                    fr.name AS function_room_name
+             FROM events e
+             LEFT JOIN function_rooms fr ON fr.id = e.function_room_id";
+    } else {
+        $sql =
+            "SELECT e.id, e.event_no, e.title, e.event_date, e.start_time, e.end_time, e.expected_guests, e.status, e.estimated_total, e.deposit_amount,
+                    NULL AS function_room_name
+             FROM events e";
+    }
 
     $where = [];
     $types = '';
     $params = [];
+
+    $or = [];
     if ($hasClientGuestId) {
-        $where[] = 'e.client_guest_id = ?';
+        $or[] = 'e.client_guest_id = ?';
         $types .= 'i';
         $params[] = $guestId;
-    } elseif ($hasClientUserId) {
-        $where[] = 'e.client_user_id = ?';
+    }
+    if ($hasClientUserId && $userId > 0) {
+        $or[] = 'e.client_user_id = ?';
         $types .= 'i';
         $params[] = $userId;
-    } else {
-        $where[] = '1=0';
     }
+    if ($hasClientEmail || $hasClientPhone) {
+        $canCheckIds = ($hasClientGuestId || $hasClientUserId);
+        $idGuard = $canCheckIds ? 'COALESCE(e.client_guest_id,0) = 0 AND COALESCE(e.client_user_id,0) = 0 AND ' : '';
+
+        if ($guestEmail !== '' && $guestPhone !== '' && $hasClientEmail && $hasClientPhone) {
+            $or[] = "({$idGuard}e.client_email = ? AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.client_phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '') = ?)";
+            $types .= 'ss';
+            $params[] = $guestEmail;
+            $params[] = $guestPhone;
+        } elseif ($guestEmail !== '' && $hasClientEmail) {
+            $or[] = "({$idGuard}e.client_email = ?)";
+            $types .= 's';
+            $params[] = $guestEmail;
+        } elseif ($guestPhone !== '' && $hasClientPhone) {
+            $or[] = "({$idGuard}REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.client_phone, '-', ''), ' ', ''), '+', ''), '(', ''), ')', '') = ?)";
+            $types .= 's';
+            $params[] = $guestPhone;
+        }
+    }
+    if (empty($or)) {
+        $or[] = '1=0';
+    }
+    $where[] = '(' . implode(' OR ', $or) . ')';
 
     $sql .= ' WHERE ' . implode(' AND ', $where) . ' ORDER BY e.id DESC LIMIT 50';
 
