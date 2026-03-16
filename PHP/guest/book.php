@@ -68,6 +68,7 @@ if (Request::isPost() && empty($errors) && $conn && $room) {
     $notes = trim((string)Request::post('notes', ''));
     $source = trim((string)Request::post('source', 'Website'));
     $paymentMethod = trim((string)Request::post('payment_method', ''));
+    $promoCodeInput = strtoupper(trim((string)Request::post('promo_code', '')));
 
     $allowedSources = ['Walk-in', 'Phone', 'Website', 'OTA', 'Agent'];
     if (!in_array($source, $allowedSources, true)) {
@@ -77,6 +78,18 @@ if (Request::isPost() && empty($errors) && $conn && $room) {
     $allowedPaymentMethods = ['GCash', 'Bank Transfer'];
     if (!in_array($paymentMethod, $allowedPaymentMethods, true)) {
         $paymentMethod = '';
+    }
+
+    if ($promoCodeInput !== '') {
+        if (!preg_match('/^[A-Z0-9_-]{3,30}$/', $promoCodeInput)) {
+            $errors['promo_code'] = 'Promo code is invalid.';
+        } else {
+            $repoTmp = new ReservationRepository($conn);
+            $promo = $repoTmp->findActivePromoByCode($promoCodeInput, date('Y-m-d'));
+            if (!$promo) {
+                $errors['promo_code'] = 'Promo code is invalid or inactive.';
+            }
+        }
     }
 
     if ($adults <= 0) {
@@ -113,7 +126,7 @@ if (Request::isPost() && empty($errors) && $conn && $room) {
                 'checkin_date' => $checkin,
                 'checkout_date' => $checkout,
                 'promo_code_id' => 0,
-                'promo_code' => '',
+                'promo_code' => $promoCodeInput,
                 'discount_amount' => 0,
                 'deposit_amount' => $depositAmount,
                 'payment_method' => $paymentMethod,
@@ -237,6 +250,13 @@ include __DIR__ . '/../partials/sidebar.php';
                         <div class="text-xs text-gray-500 mt-1">Payment is not processed online. This tells the front desk how you will pay the ₱1,000 deposit.</div>
                         <?php if (isset($errors['payment_method'])): ?>
                             <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['payment_method']) ?></div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Promo code (optional)</label>
+                        <input name="promo_code" value="<?= htmlspecialchars((string)Request::post('promo_code', '')) ?>" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                        <?php if (isset($errors['promo_code'])): ?>
+                            <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['promo_code']) ?></div>
                         <?php endif; ?>
                     </div>
                     <div class="md:col-span-2">

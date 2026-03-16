@@ -109,6 +109,9 @@ $pageTitle = 'Deposit Slip - Guest Portal';
                 <div class="text-xs text-gray-500">Deposit amount required</div>
                 <div class="text-2xl font-semibold text-gray-900 mt-1">₱<?= number_format($depositRequired, 2) ?></div>
                 <div class="text-xs text-gray-600 mt-2">Present this slip and pay the deposit at the front desk. Staff will then confirm your reservation and issue the official receipt.</div>
+                <?php if (trim((string)($reservation['promo_code'] ?? '')) !== ''): ?>
+                    <div class="text-xs text-gray-600 mt-2">Promo code: <span class="font-medium text-gray-900"><?= htmlspecialchars((string)$reservation['promo_code']) ?></span></div>
+                <?php endif; ?>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

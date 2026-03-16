@@ -3,6 +3,7 @@ require_once __DIR__ . '/../rbac_middleware.php';
 RBACMiddleware::checkPageAccess();
 
 require_once __DIR__ . '/../core/bootstrap.php';
+require_once __DIR__ . '/../domain/Reservations/ReservationRepository.php';
 
 $conn = Database::getConnection();
 
@@ -27,6 +28,9 @@ $hasLoyaltyEarnPosts = false;
 $hasLoyaltyRedeemPosts = false;
 $hasGuestLoyaltyPoints = false;
 $hasGuestLoyaltyTier = false;
+
+$hasPromoCodes = false;
+$hasReservationPromoCols = false;
 
 if ($conn) {
     try {
@@ -74,6 +78,18 @@ if ($conn) {
                 $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME = 'loyalty_tier'");
                 $hasGuestLoyaltyTier = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
             }
+
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'promo_codes'");
+            $hasPromoCodes = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $res = $conn->query(
+                "SELECT COUNT(*)
+                 FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = '{$db}'
+                   AND TABLE_NAME = 'reservations'
+                   AND COLUMN_NAME IN ('promo_code_id','promo_code','discount_amount')"
+            );
+            $hasReservationPromoCols = $res ? ((int)($res->fetch_row()[0] ?? 0) === 3) : false;
         }
     } catch (Throwable $e) {
     }
@@ -112,6 +128,109 @@ if (Request::isPost() && $conn && $hasReservations) {
     $reservationIdPost = Request::int('post', 'reservation_id', 0);
     if ($reservationIdPost > 0) {
         $reservationId = $reservationIdPost;
+    }
+
+    if ($action === 'apply_promo_code') {
+        $promoInput = strtoupper(trim((string)Request::post('promo_code', '')));
+        if ($reservationId <= 0) {
+            $errors['reservation_id'] = 'Reservation is required.';
+        }
+        if (!$hasPromoCodes || !$hasReservationPromoCols) {
+            $errors['promo_code'] = 'Promo codes are not available in this database schema.';
+        }
+        if ($promoInput === '' || !preg_match('/^[A-Z0-9_-]{3,30}$/', $promoInput)) {
+            $errors['promo_code'] = 'Promo code is invalid.';
+        }
+
+        $checkin = '';
+        $checkout = '';
+        $currentPromoId = 0;
+        $currentDiscount = 0.0;
+        if (empty($errors)) {
+            $stmt = $conn->prepare(
+                "SELECT checkin_date, checkout_date, COALESCE(promo_code_id,0) AS promo_code_id, COALESCE(discount_amount,0) AS discount_amount
+                 FROM reservations
+                 WHERE id = ?
+                 LIMIT 1"
+            );
+            if (!($stmt instanceof mysqli_stmt)) {
+                $errors['promo_code'] = 'Failed to load reservation.';
+            } else {
+                $stmt->bind_param('i', $reservationId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if (!$row) {
+                    $errors['promo_code'] = 'Reservation not found.';
+                } else {
+                    $checkin = (string)($row['checkin_date'] ?? '');
+                    $checkout = (string)($row['checkout_date'] ?? '');
+                    $currentPromoId = (int)($row['promo_code_id'] ?? 0);
+                    $currentDiscount = (float)($row['discount_amount'] ?? 0);
+                }
+            }
+        }
+
+        if (empty($errors) && ($currentPromoId > 0 || $currentDiscount > 0)) {
+            $errors['promo_code'] = 'Promo code is already applied.';
+        }
+
+        $rateSum = 0.0;
+        if (empty($errors) && $hasReservationRooms) {
+            $stmt = $conn->prepare('SELECT COALESCE(SUM(rate),0) AS s FROM reservation_rooms WHERE reservation_id = ?');
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('i', $reservationId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $rateSum = (float)($row['s'] ?? 0);
+            }
+        }
+
+        if (empty($errors)) {
+            $nights = 0;
+            $t1 = strtotime($checkin);
+            $t2 = strtotime($checkout);
+            if ($t1 !== false && $t2 !== false && $t2 > $t1) {
+                $nights = (int)round(($t2 - $t1) / 86400);
+            }
+            $staySubtotal = max(0.0, (float)$nights * (float)$rateSum);
+            if ($staySubtotal <= 0) {
+                $errors['promo_code'] = 'Cannot apply promo code without room rates.';
+            }
+        }
+
+        if (empty($errors)) {
+            $repo = new ReservationRepository($conn);
+            $promo = $repo->findActivePromoByCode($promoInput, date('Y-m-d'));
+            if (!$promo) {
+                $errors['promo_code'] = 'Promo code is invalid or inactive.';
+            } else {
+                $pid = (int)($promo['id'] ?? 0);
+                if ($pid <= 0) {
+                    $errors['promo_code'] = 'Promo code is invalid.';
+                } else {
+                    $type = (string)($promo['discount_type'] ?? 'Percent');
+                    $val = (float)($promo['discount_value'] ?? 0);
+                    $discountAmount = 0.0;
+                    if ($type === 'Percent') {
+                        $discountAmount = $staySubtotal * ($val / 100);
+                    } else {
+                        $discountAmount = $val;
+                    }
+                    $discountAmount = max(0.0, min($staySubtotal, $discountAmount));
+
+                    $ok = $repo->updateReservationPromo($reservationId, $pid, (string)($promo['code'] ?? $promoInput), $discountAmount);
+                    if (!$ok) {
+                        $errors['promo_code'] = 'Failed to apply promo code.';
+                    } else {
+                        $repo->incrementPromoUsedCount($pid);
+                        Flash::set('success', 'Promo code applied.');
+                        Response::redirect('billing_payments.php?reservation_id=' . $reservationId);
+                    }
+                }
+            }
+        }
     }
 
     if ($action === 'redeem_loyalty' && $hasReservationPayments) {
@@ -684,7 +803,9 @@ if ($conn && $hasGuests) {
 if ($conn && $hasReservations && $hasGuests && $reservationId > 0) {
         $stmt = $conn->prepare(
             "SELECT r.id, r.reference_no, r.status, r.checkin_date, r.checkout_date,
-                    r.deposit_amount, r.payment_method,
+                    r.deposit_amount, r.payment_method,"
+            . ($hasReservationPromoCols ? " r.promo_code_id, r.promo_code, r.discount_amount," : " NULL AS promo_code_id, NULL AS promo_code, 0 AS discount_amount,")
+            . "
                     g.id AS guest_id, g.first_name, g.last_name, g.phone, g.email
              FROM reservations r
              INNER JOIN guests g ON g.id = r.guest_id
@@ -948,7 +1069,8 @@ if ($conn && $selectedReservation && $hasReservationRooms) {
         $roomChargeNightlyRate = (float)($row['s'] ?? 0);
     }
 
-    $roomChargeSuggested = max(0.0, (float)$roomChargeNights * (float)$roomChargeNightlyRate);
+    $roomDiscount = $hasReservationPromoCols ? (float)($selectedReservation['discount_amount'] ?? 0) : 0.0;
+    $roomChargeSuggested = max(0.0, ((float)$roomChargeNights * (float)$roomChargeNightlyRate) - max(0.0, $roomDiscount));
 
     $stmt = $conn->prepare(
         "SELECT rr.room_id, rr.room_type_id, rr.rate, rr.adults, rr.children,
@@ -1014,6 +1136,13 @@ if ($conn && $selectedReservation && $hasPosOrders) {
 }
 
 $balance = $totCharges - $totPayments;
+
+$depositAmountForSuggested = 0.0;
+if ($selectedReservation) {
+    $depositAmountForSuggested = (float)($selectedReservation['deposit_amount'] ?? 0);
+}
+$suggestedBalance = max(0.0, (float)$roomChargeSuggested - max(0.0, $depositAmountForSuggested));
+$balanceDisplay = ($totCharges > 0 || $totPayments > 0) ? $balance : $suggestedBalance;
 
 $pendingApprovals = [];
 
@@ -1108,6 +1237,29 @@ include __DIR__ . '/../partials/sidebar.php';
                                 <div class="text-xs text-gray-500 mt-1"><?= htmlspecialchars((string)($guestDisplay['email'] ?? '')) ?></div>
                             </div>
                         </div>
+
+                        <?php if ($hasReservationPromoCols && $hasPromoCodes): ?>
+                            <div class="mt-4 rounded-lg border border-gray-100 p-4">
+                                <div class="flex items-center justify-between gap-3 flex-wrap">
+                                    <div>
+                                        <div class="text-sm font-medium text-gray-900">Apply Promo Code</div>
+                                        <?php $applied = trim((string)($selectedReservation['promo_code'] ?? '')); ?>
+                                        <?php if ($applied !== ''): ?>
+                                            <div class="text-xs text-gray-500 mt-1">Applied: <span class="font-medium text-gray-900"><?= htmlspecialchars($applied) ?></span></div>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                                <form method="post" class="mt-3 flex flex-col sm:flex-row gap-2">
+                                    <input type="hidden" name="action" value="apply_promo_code" />
+                                    <input type="hidden" name="reservation_id" value="<?= (int)$reservationId ?>" />
+                                    <input name="promo_code" placeholder="e.g., SUMMER10" class="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm" <?= $applied !== '' ? 'disabled' : '' ?> />
+                                    <button class="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black transition" <?= $applied !== '' ? 'disabled' : '' ?>>Apply</button>
+                                </form>
+                                <?php if (isset($errors['promo_code'])): ?>
+                                    <div class="text-xs text-red-600 mt-2"><?= htmlspecialchars($errors['promo_code']) ?></div>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
                         <div class="flex flex-wrap gap-2 mt-4">
                             <a class="px-3 py-2 rounded-lg border text-sm <?= $tab === 'reservations' ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-gray-100 hover:bg-gray-50' ?>" href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/billing_payments.php?guest_id=<?= (int)($guestDisplay['id'] ?? 0) ?>&tab=reservations">Reservations</a>
                             <a class="px-3 py-2 rounded-lg border text-sm <?= $tab === 'pos' ? 'border-blue-200 bg-blue-50 text-blue-800' : 'border-gray-100 hover:bg-gray-50' ?>" href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/billing_payments.php?guest_id=<?= (int)($guestDisplay['id'] ?? 0) ?>&tab=pos">POS</a>
@@ -1300,7 +1452,7 @@ include __DIR__ . '/../partials/sidebar.php';
                             </div>
                             <div class="rounded-lg border border-gray-100 p-4">
                                 <div class="text-xs text-gray-500">Balance</div>
-                                <div class="text-xl font-medium <?= $balance > 0 ? 'text-red-700' : 'text-green-700' ?>">₱<?= number_format($balance, 2) ?></div>
+                                <div class="text-xl font-medium <?= $balanceDisplay > 0 ? 'text-red-700' : 'text-green-700' ?>">₱<?= number_format((float)$balanceDisplay, 2) ?></div>
                             </div>
                         </div>
 

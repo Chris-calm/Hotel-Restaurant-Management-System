@@ -50,6 +50,31 @@ if ($reservationId > 0) {
     }
 }
 
+$activeTodayRoomIds = [];
+if ($conn) {
+    $today = date('Y-m-d');
+    $statusSql = "('Pending','Confirmed','Upcoming','Checked In')";
+    $stmt = $conn->prepare(
+        "SELECT DISTINCT rr.room_id
+         FROM reservation_rooms rr
+         INNER JOIN reservations r ON r.id = rr.reservation_id
+         WHERE r.status IN {$statusSql}
+           AND (r.status = 'Checked In' OR (r.checkin_date <= ? AND r.checkout_date > ?))"
+    );
+    if ($stmt instanceof mysqli_stmt) {
+        $stmt->bind_param('ss', $today, $today);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $rid = (int)($row['room_id'] ?? 0);
+            if ($rid > 0) {
+                $activeTodayRoomIds[$rid] = true;
+            }
+        }
+        $stmt->close();
+    }
+}
+
 $filters = [
     'checkin_date' => (string)Request::get('checkin_date', ''),
     'checkout_date' => (string)Request::get('checkout_date', ''),
@@ -197,6 +222,14 @@ if (!$systemReservationsOnly || $prefillReservation) {
                  INNER JOIN room_types rt ON rt.id = rooms.room_type_id
                  WHERE rooms.status = 'Vacant'
                    AND ({$rtFilter} = 0 OR rooms.room_type_id = {$rtFilter})
+                   AND NOT EXISTS (
+                        SELECT 1
+                        FROM reservation_rooms rr
+                        INNER JOIN reservations r ON r.id = rr.reservation_id
+                        WHERE rr.room_id = rooms.id
+                          AND r.status IN ('Pending','Confirmed','Upcoming','Checked In')
+                          AND (r.status = 'Checked In' OR (r.checkin_date <= CURDATE() AND r.checkout_date > CURDATE()))
+                   )
                  ORDER BY last_cleaned_at DESC, rooms.room_no ASC";
             $res = $conn->query($sql);
             if ($res) {
@@ -211,6 +244,10 @@ if (!$systemReservationsOnly || $prefillReservation) {
                     continue;
                 }
                 if ((int)$filters['room_type_id'] > 0 && (int)($r['room_type_id'] ?? 0) !== (int)$filters['room_type_id']) {
+                    continue;
+                }
+                $rid = (int)($r['id'] ?? 0);
+                if ($rid > 0 && isset($activeTodayRoomIds[$rid])) {
                     continue;
                 }
 
@@ -292,6 +329,7 @@ if ($prefillReservation) {
     $data['rate'] = (string)($prefillReservation['rate'] ?? '');
     $data['adults'] = (int)($prefillReservation['adults'] ?? 1);
     $data['children'] = (int)($prefillReservation['children'] ?? 0);
+    $data['promo_code'] = (string)($prefillReservation['promo_code'] ?? '');
     $data['deposit_amount'] = (string)($prefillReservation['deposit_amount'] ?? '1000');
     $data['payment_method'] = (string)($prefillReservation['payment_method'] ?? 'Cash');
     $data['notes'] = (string)($prefillReservation['notes'] ?? '');
@@ -397,6 +435,9 @@ if (Request::isPost()) {
             }
             if ((string)($data['payment_method'] ?? '') !== '') {
                 $payload['payment_method'] = (string)$data['payment_method'];
+            }
+            if (trim((string)($data['promo_code'] ?? '')) !== '') {
+                $payload['promo_code'] = (string)$data['promo_code'];
             }
 
             $ok = $reservationService->updateStatus((int)$prefillReservation['id'], 'Confirmed', $payload, $errors);

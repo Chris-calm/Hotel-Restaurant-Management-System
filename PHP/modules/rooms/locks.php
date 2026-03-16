@@ -90,6 +90,21 @@ if ($conn) {
         $stmt->close();
     }
 
+    if ($lockColumnsReady) {
+        $conn->query(
+            "UPDATE rooms
+             SET lock_status = 'Locked', lock_last_sync_at = NOW()
+             WHERE COALESCE(lock_status,'') = 'Unlocked'
+               AND id NOT IN (
+                    SELECT DISTINCT rr.room_id
+                    FROM reservation_rooms rr
+                    INNER JOIN reservations r ON r.id = rr.reservation_id
+                    WHERE r.status IN ('Confirmed','Upcoming','Checked In')
+                      AND (r.status = 'Checked In' OR (r.checkin_date <= CURDATE() AND r.checkout_date > CURDATE()))
+               )"
+        );
+    }
+
     $stmt = $conn->prepare(
         "SELECT rr.room_id,
                 r.id AS reservation_id,

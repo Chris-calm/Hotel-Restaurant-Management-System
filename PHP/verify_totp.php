@@ -18,6 +18,7 @@ if (!$conn) {
 }
 
 $hasUsersGuestIdColumn = false;
+$hasTrustedDeviceUserAgent = false;
 try {
     $dbRow = $conn->query('SELECT DATABASE()');
     $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
@@ -27,9 +28,15 @@ try {
             "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'users' AND COLUMN_NAME = 'guest_id'"
         );
         $hasUsersGuestIdColumn = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+        $res = $conn->query(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices' AND COLUMN_NAME = 'user_agent'"
+        );
+        $hasTrustedDeviceUserAgent = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
     }
 } catch (Throwable $e) {
     $hasUsersGuestIdColumn = false;
+    $hasTrustedDeviceUserAgent = false;
 }
 
 $user = null;
@@ -97,9 +104,16 @@ if (Request::isPost()) {
             $expiresAt = date('Y-m-d H:i:s', time() + (7 * 24 * 60 * 60));
             $ua = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
 
-            $iStmt = $conn->prepare('INSERT INTO user_trusted_devices (user_id, token_hash, expires_at, user_agent, last_used_at) VALUES (?, ?, ?, ?, NOW())');
+            $sql = $hasTrustedDeviceUserAgent
+                ? 'INSERT INTO user_trusted_devices (user_id, token_hash, expires_at, user_agent, last_used_at) VALUES (?, ?, ?, ?, NOW())'
+                : 'INSERT INTO user_trusted_devices (user_id, token_hash, expires_at, last_used_at) VALUES (?, ?, ?, NOW())';
+            $iStmt = $conn->prepare($sql);
             if ($iStmt instanceof mysqli_stmt) {
-                $iStmt->bind_param('isss', $userId, $tokenHash, $expiresAt, $ua);
+                if ($hasTrustedDeviceUserAgent) {
+                    $iStmt->bind_param('isss', $userId, $tokenHash, $expiresAt, $ua);
+                } else {
+                    $iStmt->bind_param('iss', $userId, $tokenHash, $expiresAt);
+                }
                 $iStmt->execute();
                 $iStmt->close();
 

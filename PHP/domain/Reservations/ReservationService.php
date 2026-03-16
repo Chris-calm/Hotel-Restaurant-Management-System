@@ -186,6 +186,110 @@ final class ReservationService
                 return false;
             }
 
+            $explicitPromo = strtoupper(trim((string)($data['promo_code'] ?? '')));
+            $storedPromo = strtoupper(trim((string)($current['promo_code'] ?? '')));
+            $promoCodeInput = $explicitPromo !== '' ? $explicitPromo : $storedPromo;
+            $enforcePromo = $explicitPromo !== '';
+
+            if ($promoCodeInput !== '') {
+                if (!$this->repo->supportsReservationPromoColumns()) {
+                    if ($enforcePromo) {
+                        $errors['promo_code'] = 'Promo code fields are not available in reservations table. Please run the latest database update.';
+                        return false;
+                    }
+                    $promoCodeInput = '';
+                }
+                if (!$this->repo->supportsPromoCodes()) {
+                    if ($enforcePromo) {
+                        $errors['promo_code'] = 'Promo codes table is missing. Please run the latest database update.';
+                        return false;
+                    }
+                    $promoCodeInput = '';
+                }
+
+                $promoCodeId = (int)($current['promo_code_id'] ?? 0);
+                $existingDiscount = (float)($current['discount_amount'] ?? 0);
+
+                if ($promoCodeId > 0 || $existingDiscount > 0) {
+                    if ($enforcePromo) {
+                        $errors['promo_code'] = 'Promo code is already applied.';
+                        return false;
+                    }
+                    $promoCodeInput = '';
+                }
+
+                $checkin = (string)($current['checkin_date'] ?? '');
+                $checkout = (string)($current['checkout_date'] ?? '');
+                $rate = (float)($current['rate'] ?? 0);
+
+                $nights = 0;
+                $n1 = strtotime($checkin);
+                $n2 = strtotime($checkout);
+                if ($n1 !== false && $n2 !== false && $n2 > $n1) {
+                    $nights = (int)round(($n2 - $n1) / 86400);
+                }
+
+                if ($rate <= 0) {
+                    $rate = (float)$this->repo->sumReservationRoomRates($reservationId);
+                }
+
+                $staySubtotal = max(0.0, (float)$nights * (float)$rate);
+                if ($staySubtotal <= 0) {
+                    if ($enforcePromo) {
+                        $errors['promo_code'] = 'Cannot apply promo code without a valid stay subtotal.';
+                        return false;
+                    }
+                    $promoCodeInput = '';
+                }
+
+                if ($promoCodeInput !== '') {
+                    $promo = $this->repo->findActivePromoByCode($promoCodeInput, date('Y-m-d'));
+                    if (!$promo) {
+                        if ($enforcePromo) {
+                            $errors['promo_code'] = 'Promo code is invalid or inactive.';
+                            return false;
+                        }
+                        $this->repo->updateReservationPromo($reservationId, 0, '', 0.0);
+                        $promoCodeInput = '';
+                        $promo = null;
+                    }
+                }
+
+                if ($promoCodeInput !== '' && is_array($promo)) {
+                    $pid = (int)($promo['id'] ?? 0);
+                    if ($pid <= 0) {
+                        if ($enforcePromo) {
+                            $errors['promo_code'] = 'Promo code is invalid.';
+                            return false;
+                        }
+                        $this->repo->updateReservationPromo($reservationId, 0, '', 0.0);
+                        $promoCodeInput = '';
+                    } else {
+                        $type = (string)($promo['discount_type'] ?? 'Percent');
+                        $val = (float)($promo['discount_value'] ?? 0);
+                        $discountAmount = 0.0;
+                        if ($type === 'Percent') {
+                            $discountAmount = $staySubtotal * ($val / 100);
+                        } else {
+                            $discountAmount = $val;
+                        }
+                        $discountAmount = max(0.0, min($staySubtotal, $discountAmount));
+
+                        $okPromo = $this->repo->updateReservationPromo($reservationId, $pid, (string)($promo['code'] ?? $promoCodeInput), $discountAmount);
+                        if (!$okPromo) {
+                            if ($enforcePromo) {
+                                $errors['promo_code'] = 'Failed to apply promo code.';
+                                return false;
+                            }
+                            $this->repo->updateReservationPromo($reservationId, 0, '', 0.0);
+                            $promoCodeInput = '';
+                        } else {
+                            $this->repo->incrementPromoUsedCount($pid);
+                        }
+                    }
+                }
+            }
+
             $this->applyLoyaltyTierDiscountOnConfirm($current);
         }
 

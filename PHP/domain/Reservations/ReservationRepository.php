@@ -19,6 +19,16 @@ final class ReservationRepository
         $this->conn = $conn;
     }
 
+    public function supportsPromoCodes(): bool
+    {
+        return $this->hasPromoCodesTable();
+    }
+
+    public function supportsReservationPromoColumns(): bool
+    {
+        return $this->hasPromoColumns();
+    }
+
     private function hasHousekeepingCompletedAt(): bool
     {
         if ($this->hasHousekeepingCompletedAt !== null) {
@@ -555,6 +565,32 @@ final class ReservationRepository
         return $ok;
     }
 
+    public function updateReservationPromo(int $reservationId, int $promoId, string $promoCode, float $discountAmount): bool
+    {
+        if (!$this->conn || !$this->hasPromoColumns()) {
+            return false;
+        }
+
+        $reservationId = max(1, $reservationId);
+        $promoId = max(0, $promoId);
+        $promoCode = strtoupper(trim($promoCode));
+        $discountAmount = max(0.0, (float)$discountAmount);
+
+        $stmt = $this->conn->prepare(
+            "UPDATE reservations
+             SET promo_code_id = NULLIF(?,0), promo_code = NULLIF(?,''), discount_amount = ?
+             WHERE id = ?"
+        );
+        if (!$stmt) {
+            return false;
+        }
+
+        $stmt->bind_param('isdi', $promoId, $promoCode, $discountAmount, $reservationId);
+        $ok = $stmt->execute();
+        $stmt->close();
+        return $ok;
+    }
+
     public function updateReservationDiscountAmount(int $reservationId, float $discountAmount): bool
     {
         if (!$this->conn) {
@@ -787,6 +823,27 @@ final class ReservationRepository
         $ok = $stmt->execute();
         $stmt->close();
         return $ok;
+    }
+
+    public function sumReservationRoomRates(int $reservationId): float
+    {
+        if (!$this->conn) {
+            return 0.0;
+        }
+
+        $reservationId = max(1, $reservationId);
+
+        $stmt = $this->conn->prepare('SELECT COALESCE(SUM(rate),0) AS s FROM reservation_rooms WHERE reservation_id = ?');
+        if (!$stmt) {
+            return 0.0;
+        }
+
+        $stmt->bind_param('i', $reservationId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (float)($row['s'] ?? 0);
     }
 
     public function findReservationDetails(int $reservationId): ?array
