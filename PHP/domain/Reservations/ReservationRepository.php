@@ -468,6 +468,34 @@ final class ReservationRepository
         $stmt->close();
     }
 
+    public function guestHasRedeemedPromo(int $guestId, int $promoId, string $promoCode = ''): bool
+    {
+        if (!$this->conn || !$this->hasPromoColumns()) {
+            return false;
+        }
+
+        $guestId = max(1, $guestId);
+        $promoId = max(1, $promoId);
+        $promoCode = strtoupper(trim($promoCode));
+
+        $stmt = $this->conn->prepare(
+            "SELECT 1
+             FROM reservations
+             WHERE guest_id = ?
+               AND (COALESCE(promo_code_id,0) > 0 OR COALESCE(discount_amount,0) > 0)
+               AND (COALESCE(promo_code_id,0) = ? OR (? <> '' AND UPPER(COALESCE(promo_code,'')) = ?))
+             LIMIT 1"
+        );
+        if (!($stmt instanceof mysqli_stmt)) {
+            return false;
+        }
+        $stmt->bind_param('iiss', $guestId, $promoId, $promoCode, $promoCode);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return (bool)$row;
+    }
+
     public function listGuests(string $q = ''): array
     {
         if (!$this->conn) {

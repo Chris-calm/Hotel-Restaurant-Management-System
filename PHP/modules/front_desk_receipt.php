@@ -165,6 +165,9 @@ $APP_BASE_URL = App::baseUrl();
                             <?php if ($discount > 0): ?>
                                 • Discount ₱<?= number_format($discount, 2) ?>
                             <?php endif; ?>
+                            <?php if (trim((string)($reservation['promo_code'] ?? '')) !== ''): ?>
+                                • Promo <?= htmlspecialchars((string)$reservation['promo_code']) ?>
+                            <?php endif; ?>
                             • Deposit ₱<?= number_format($deposit, 2) ?>
                         </div>
                     </div>

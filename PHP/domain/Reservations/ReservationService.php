@@ -188,8 +188,8 @@ final class ReservationService
 
             $explicitPromo = strtoupper(trim((string)($data['promo_code'] ?? '')));
             $storedPromo = strtoupper(trim((string)($current['promo_code'] ?? '')));
-            $promoCodeInput = $explicitPromo !== '' ? $explicitPromo : $storedPromo;
-            $enforcePromo = $explicitPromo !== '';
+            $enforcePromo = ($explicitPromo !== '' && $explicitPromo !== $storedPromo);
+            $promoCodeInput = $enforcePromo ? $explicitPromo : $storedPromo;
 
             if ($promoCodeInput !== '') {
                 if (!$this->repo->supportsReservationPromoColumns()) {
@@ -256,6 +256,7 @@ final class ReservationService
                 }
 
                 if ($promoCodeInput !== '' && is_array($promo)) {
+                    $guestId = (int)($current['guest_id'] ?? 0);
                     $pid = (int)($promo['id'] ?? 0);
                     if ($pid <= 0) {
                         if ($enforcePromo) {
@@ -264,27 +265,38 @@ final class ReservationService
                         }
                         $this->repo->updateReservationPromo($reservationId, 0, '', 0.0);
                         $promoCodeInput = '';
+                        $promo = null;
                     } else {
-                        $type = (string)($promo['discount_type'] ?? 'Percent');
-                        $val = (float)($promo['discount_value'] ?? 0);
-                        $discountAmount = 0.0;
-                        if ($type === 'Percent') {
-                            $discountAmount = $staySubtotal * ($val / 100);
-                        } else {
-                            $discountAmount = $val;
-                        }
-                        $discountAmount = max(0.0, min($staySubtotal, $discountAmount));
-
-                        $okPromo = $this->repo->updateReservationPromo($reservationId, $pid, (string)($promo['code'] ?? $promoCodeInput), $discountAmount);
-                        if (!$okPromo) {
+                        if ($guestId > 0 && $this->repo->guestHasRedeemedPromo($guestId, $pid, (string)($promo['code'] ?? $promoCodeInput))) {
                             if ($enforcePromo) {
-                                $errors['promo_code'] = 'Failed to apply promo code.';
+                                $errors['promo_code'] = 'Promo code is already used';
                                 return false;
                             }
                             $this->repo->updateReservationPromo($reservationId, 0, '', 0.0);
                             $promoCodeInput = '';
+                            $promo = null;
                         } else {
-                            $this->repo->incrementPromoUsedCount($pid);
+                            $type = (string)($promo['discount_type'] ?? 'Percent');
+                            $val = (float)($promo['discount_value'] ?? 0);
+                            if ($type === 'Percent') {
+                                $discountAmount = $staySubtotal * ($val / 100);
+                            } else {
+                                $discountAmount = $val;
+                            }
+                            $discountAmount = max(0.0, min($staySubtotal, $discountAmount));
+
+                            $okPromo = $this->repo->updateReservationPromo($reservationId, $pid, (string)($promo['code'] ?? $promoCodeInput), $discountAmount);
+                            if (!$okPromo) {
+                                if ($enforcePromo) {
+                                    $errors['promo_code'] = 'Failed to apply promo code.';
+                                    return false;
+                                }
+                                $this->repo->updateReservationPromo($reservationId, 0, '', 0.0);
+                                $promoCodeInput = '';
+                                $promo = null;
+                            } else {
+                                $this->repo->incrementPromoUsedCount($pid);
+                            }
                         }
                     }
                 }

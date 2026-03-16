@@ -46,6 +46,20 @@ $data = [
     'username' => '',
 ];
 
+$hasGuestProfilePicturePath = false;
+if ($conn && $hasGuestsTable) {
+    try {
+        $dbRow = $conn->query('SELECT DATABASE()');
+        $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
+        $db = $conn->real_escape_string($db);
+        if ($db !== '') {
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME = 'profile_picture_path'");
+            $hasGuestProfilePicturePath = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+        }
+    } catch (Throwable $e) {
+    }
+}
+
 if (Request::isPost() && $conn && $hasUsersTable && $hasGuestsTable) {
     $data['first_name'] = trim((string)Request::post('first_name', ''));
     $data['last_name'] = trim((string)Request::post('last_name', ''));
@@ -54,6 +68,48 @@ if (Request::isPost() && $conn && $hasUsersTable && $hasGuestsTable) {
     $data['username'] = trim((string)Request::post('username', ''));
     $password = (string)Request::post('password', '');
     $confirm = (string)Request::post('confirm_password', '');
+
+    $profilePicturePath = '';
+    if ($hasGuestProfilePicturePath && isset($_FILES['profile_picture']) && is_array($_FILES['profile_picture']) && (int)($_FILES['profile_picture']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+        $err = (int)($_FILES['profile_picture']['error'] ?? UPLOAD_ERR_OK);
+        if ($err !== UPLOAD_ERR_OK) {
+            $errors['profile_picture'] = 'Failed to upload profile picture.';
+        } else {
+            $tmp = (string)($_FILES['profile_picture']['tmp_name'] ?? '');
+            $orig = (string)($_FILES['profile_picture']['name'] ?? '');
+            $size = (int)($_FILES['profile_picture']['size'] ?? 0);
+
+            if ($size <= 0) {
+                $errors['profile_picture'] = 'Invalid profile picture file.';
+            } elseif ($size > (5 * 1024 * 1024)) {
+                $errors['profile_picture'] = 'Profile picture must be 5MB or less.';
+            } else {
+                $ext = strtolower((string)pathinfo($orig, PATHINFO_EXTENSION));
+                $allowed = ['jpg', 'jpeg', 'png', 'webp'];
+                if (!in_array($ext, $allowed, true)) {
+                    $errors['profile_picture'] = 'Profile picture must be JPG, PNG, or WEBP.';
+                } else {
+                    $root = dirname(__DIR__);
+                    $uploadDir = $root . '/uploads/guests';
+                    if (!is_dir($uploadDir)) {
+                        @mkdir($uploadDir, 0775, true);
+                    }
+                    if (!is_dir($uploadDir) || !is_writable($uploadDir)) {
+                        $errors['profile_picture'] = 'Upload directory is not writable.';
+                    } else {
+                        $safeExt = ($ext === 'jpeg') ? 'jpg' : $ext;
+                        $filename = 'guest_pp_' . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $safeExt;
+                        $dest = $uploadDir . '/' . $filename;
+                        if (!move_uploaded_file($tmp, $dest)) {
+                            $errors['profile_picture'] = 'Failed to save uploaded profile picture.';
+                        } else {
+                            $profilePicturePath = '/uploads/guests/' . $filename;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if ($data['username'] === '') {
         $errors['username'] = 'Username is required.';
@@ -87,12 +143,29 @@ if (Request::isPost() && $conn && $hasUsersTable && $hasGuestsTable) {
     }
 
     if (empty($errors)) {
+        $phoneDigits = preg_replace('/\D+/', '', (string)$data['phone']);
+        if ($phoneDigits !== '') {
+            $stmt = $conn->prepare('SELECT id FROM guests WHERE REPLACE(REPLACE(REPLACE(REPLACE(phone, "-", ""), " ", ""), "(", ""), ")", "") = ? LIMIT 1');
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->bind_param('s', $phoneDigits);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                if ($res && $res->fetch_assoc()) {
+                    $errors['phone'] = 'That phone number is already registered.';
+                }
+                $stmt->close();
+            }
+        }
+    }
+
+    if (empty($errors)) {
         $guestService = new GuestService(new GuestRepository($conn));
         $guestPayload = [
             'first_name' => $data['first_name'],
             'last_name' => $data['last_name'],
             'email' => $data['email'],
             'phone' => $data['phone'],
+            'profile_picture_path' => $profilePicturePath,
             'status' => 'Lead',
         ];
         $guestId = $guestService->create($guestPayload, $errors);
@@ -176,7 +249,7 @@ $pageTitle = 'Create Account - Hotel Management System';
                     <h3 class="text-lg font-medium text-gray-900 mb-1">Guest details</h3>
                     <p class="text-xs text-gray-500 mb-4">These details are used for reservations and loyalty points.</p>
 
-                    <form method="post" class="space-y-4">
+                    <form method="post" enctype="multipart/form-data" class="space-y-4">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">First name</label>
@@ -193,6 +266,7 @@ $pageTitle = 'Create Account - Hotel Management System';
                                 <?php endif; ?>
                             </div>
                         </div>
+
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
                             <input name="email" value="<?= htmlspecialchars($data['email']) ?>" placeholder="name@example.com" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
@@ -200,6 +274,7 @@ $pageTitle = 'Create Account - Hotel Management System';
                                 <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['email']) ?></div>
                             <?php endif; ?>
                         </div>
+
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
                             <input name="phone" value="<?= htmlspecialchars($data['phone']) ?>" placeholder="09xxxxxxxxx" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
@@ -207,6 +282,17 @@ $pageTitle = 'Create Account - Hotel Management System';
                                 <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['phone']) ?></div>
                             <?php endif; ?>
                         </div>
+
+                        <?php if ($hasGuestProfilePicturePath): ?>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Profile picture (optional)</label>
+                                <input type="file" name="profile_picture" accept="image/jpeg,image/png,image/webp" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" />
+                                <?php if (isset($errors['profile_picture'])): ?>
+                                    <div class="text-xs text-red-600 mt-1"><?= htmlspecialchars($errors['profile_picture']) ?></div>
+                                <?php endif; ?>
+                                <div class="text-xs text-gray-500 mt-1">Supported: JPG, PNG, WEBP (max 5MB)</div>
+                            </div>
+                        <?php endif; ?>
 
                         <div class="pt-2 border-t border-gray-100">
                             <h3 class="text-lg font-medium text-gray-900 mb-1">Login credentials</h3>

@@ -18,7 +18,11 @@ if (!$conn) {
 }
 
 $hasUsersGuestIdColumn = false;
+$hasTrustedDevicesTable = false;
 $hasTrustedDeviceUserAgent = false;
+$hasTrustedDeviceTokenHash = false;
+$hasTrustedDeviceExpiresAt = false;
+$hasTrustedDeviceLastUsedAt = false;
 try {
     $dbRow = $conn->query('SELECT DATABASE()');
     $db = $dbRow ? (string)($dbRow->fetch_row()[0] ?? '') : '';
@@ -33,10 +37,34 @@ try {
             "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices' AND COLUMN_NAME = 'user_agent'"
         );
         $hasTrustedDeviceUserAgent = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+        $res = $conn->query(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices'"
+        );
+        $hasTrustedDevicesTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+        $res = $conn->query(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices' AND COLUMN_NAME = 'token_hash'"
+        );
+        $hasTrustedDeviceTokenHash = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+        $res = $conn->query(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices' AND COLUMN_NAME = 'expires_at'"
+        );
+        $hasTrustedDeviceExpiresAt = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+        $res = $conn->query(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices' AND COLUMN_NAME = 'last_used_at'"
+        );
+        $hasTrustedDeviceLastUsedAt = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
     }
 } catch (Throwable $e) {
     $hasUsersGuestIdColumn = false;
+    $hasTrustedDevicesTable = false;
     $hasTrustedDeviceUserAgent = false;
+    $hasTrustedDeviceTokenHash = false;
+    $hasTrustedDeviceExpiresAt = false;
+    $hasTrustedDeviceLastUsedAt = false;
 }
 
 $user = null;
@@ -99,6 +127,9 @@ if (Request::isPost()) {
         }
 
         if ($remember) {
+            if (!$hasTrustedDevicesTable || !$hasTrustedDeviceTokenHash || !$hasTrustedDeviceExpiresAt || !$hasTrustedDeviceLastUsedAt) {
+                Flash::set('error', 'Trusted device is unavailable in this database schema.');
+            } else {
             $rawToken = bin2hex(random_bytes(32));
             $tokenHash = hash('sha256', $rawToken);
             $expiresAt = date('Y-m-d H:i:s', time() + (7 * 24 * 60 * 60));
@@ -114,17 +145,24 @@ if (Request::isPost()) {
                 } else {
                     $iStmt->bind_param('iss', $userId, $tokenHash, $expiresAt);
                 }
-                $iStmt->execute();
+                $ok = $iStmt->execute();
                 $iStmt->close();
 
-                $cookieExpire = time() + (7 * 24 * 60 * 60);
-                setcookie('trusted_device', $rawToken, [
-                    'expires' => $cookieExpire,
-                    'path' => '/',
-                    'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
-                    'httponly' => true,
-                    'samesite' => 'Lax',
-                ]);
+                if ($ok) {
+                    $cookieExpire = time() + (7 * 24 * 60 * 60);
+                    setcookie('trusted_device', $rawToken, [
+                        'expires' => $cookieExpire,
+                        'path' => '/',
+                        'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+                        'httponly' => true,
+                        'samesite' => 'Lax',
+                    ]);
+                } else {
+                    Flash::set('error', 'Failed to remember this device.');
+                }
+            } else {
+                Flash::set('error', 'Failed to remember this device.');
+            }
             }
         }
 

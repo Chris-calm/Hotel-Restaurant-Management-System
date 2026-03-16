@@ -17,11 +17,16 @@ $user = null;
 $hasUsers = false;
 $guestLoyalty = null;
 $hasGuestProfilePicture = false;
+$hasGuestIdentityCols = false;
+$hasGuestPrefsNotesCols = false;
+$guest = null;
 $hasUser2faTable = false;
 $hasUserTrustedDevicesTable = false;
 $twofa = null;
 $trustedDevices = [];
 $trustedDevicesCount = 0;
+$trustedDevicesHasUserAgent = false;
+$trustedDevicesHasLastUsedAt = false;
 
 if ($conn) {
     try {
@@ -37,6 +42,14 @@ if ($conn) {
 
             $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices'");
             $hasUserTrustedDevicesTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            if ($hasUserTrustedDevicesTable) {
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices' AND COLUMN_NAME = 'user_agent'");
+                $trustedDevicesHasUserAgent = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices' AND COLUMN_NAME = 'last_used_at'");
+                $trustedDevicesHasLastUsedAt = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+            }
         }
     } catch (Throwable $e) {
     }
@@ -68,7 +81,10 @@ if ($conn && $hasUsers && $userId > 0) {
 
     if ($hasUserTrustedDevicesTable) {
         try {
-            $dStmt = $conn->prepare('SELECT id, expires_at, user_agent, created_at, last_used_at FROM user_trusted_devices WHERE user_id = ? AND expires_at > NOW() ORDER BY created_at DESC LIMIT 20');
+            $dSel = 'id, expires_at, created_at';
+            $dSel .= $trustedDevicesHasUserAgent ? ', user_agent' : ', NULL AS user_agent';
+            $dSel .= $trustedDevicesHasLastUsedAt ? ', last_used_at' : ', NULL AS last_used_at';
+            $dStmt = $conn->prepare('SELECT ' . $dSel . ' FROM user_trusted_devices WHERE user_id = ? AND expires_at > NOW() ORDER BY created_at DESC LIMIT 20');
             if ($dStmt instanceof mysqli_stmt) {
                 $dStmt->bind_param('i', $userId);
                 $dStmt->execute();
@@ -78,10 +94,21 @@ if ($conn && $hasUsers && $userId > 0) {
                 }
                 $dStmt->close();
             }
+
+            $cStmt = $conn->prepare('SELECT COUNT(*) AS c FROM user_trusted_devices WHERE user_id = ? AND expires_at > NOW()');
+            if ($cStmt instanceof mysqli_stmt) {
+                $cStmt->bind_param('i', $userId);
+                $cStmt->execute();
+                $row = $cStmt->get_result()->fetch_assoc();
+                $cStmt->close();
+                $trustedDevicesCount = (int)($row['c'] ?? 0);
+            } else {
+                $trustedDevicesCount = count($trustedDevices);
+            }
         } catch (Throwable $e) {
             $trustedDevices = [];
+            $trustedDevicesCount = 0;
         }
-        $trustedDevicesCount = count($trustedDevices);
     }
 
     if ($guestId > 0) {
@@ -92,6 +119,12 @@ if ($conn && $hasUsers && $userId > 0) {
             if ($db !== '') {
                 $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME = 'profile_picture_path'");
                 $hasGuestProfilePicture = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME IN ('id_type','id_number','id_photo_path')");
+                $hasGuestIdentityCols = $res ? ((int)($res->fetch_row()[0] ?? 0) === 3) : false;
+
+                $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'guests' AND COLUMN_NAME IN ('preferences','notes')");
+                $hasGuestPrefsNotesCols = $res ? ((int)($res->fetch_row()[0] ?? 0) === 2) : false;
             }
         } catch (Throwable $e) {
         }
@@ -116,6 +149,30 @@ if ($conn && $hasUsers && $userId > 0) {
                 }
             }
         } catch (Throwable $e) {
+        }
+    }
+
+    if ($guestId > 0) {
+        try {
+            $idSelect = $hasGuestIdentityCols ? 'id_type, id_number, id_photo_path,' : 'NULL AS id_type, NULL AS id_number, NULL AS id_photo_path,';
+            $ppSelect = $hasGuestProfilePicture ? 'profile_picture_path,' : 'NULL AS profile_picture_path,';
+            $prefsSelect = $hasGuestPrefsNotesCols ? 'preferences, notes,' : 'NULL AS preferences, NULL AS notes,';
+            $gStmt = $conn->prepare(
+                "SELECT id, first_name, last_name, email, phone, status,
+                        {$ppSelect}
+                        {$idSelect}
+                        {$prefsSelect}
+                        created_at
+                 FROM guests WHERE id = ? LIMIT 1"
+            );
+            if ($gStmt instanceof mysqli_stmt) {
+                $gStmt->bind_param('i', $guestId);
+                $gStmt->execute();
+                $guest = $gStmt->get_result()->fetch_assoc() ?: null;
+                $gStmt->close();
+            }
+        } catch (Throwable $e) {
+            $guest = null;
         }
     }
 }
@@ -557,7 +614,50 @@ include __DIR__ . '/partials/sidebar.php';
                                 <input type="hidden" name="action" value="remove_profile_picture" />
                                 <button class="w-full px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm hover:bg-gray-50 transition">Remove Photo</button>
                             </form>
+
                         </div>
+
+                        <?php if ($guestId > 0 && $guest): ?>
+                            <div class="rounded-lg border border-gray-100 p-4">
+                                <div class="text-sm font-medium text-gray-900">Guest Details</div>
+                                <div class="text-xs text-gray-500 mt-1">Reservation profile linked to this account</div>
+
+                                <div class="mt-3 space-y-2 text-sm text-gray-700">
+                                    <div><span class="text-gray-500">Name:</span> <span class="font-medium text-gray-900"><?= htmlspecialchars(trim((string)($guest['first_name'] ?? '') . ' ' . (string)($guest['last_name'] ?? ''))) ?></span></div>
+                                    <div><span class="text-gray-500">Status:</span> <span class="font-medium text-gray-900"><?= htmlspecialchars((string)($guest['status'] ?? '')) ?></span></div>
+                                    <div><span class="text-gray-500">Phone:</span> <span class="font-medium text-gray-900"><?= htmlspecialchars((string)($guest['phone'] ?? '')) ?></span></div>
+                                    <div><span class="text-gray-500">Email:</span> <span class="font-medium text-gray-900"><?= htmlspecialchars((string)($guest['email'] ?? '')) ?></span></div>
+
+                                    <?php if (trim((string)($guest['profile_picture_path'] ?? '')) !== ''): ?>
+                                        <div class="text-xs text-gray-500">
+                                            Guest photo: <a class="text-blue-600 hover:underline" target="_blank" href="<?= htmlspecialchars($APP_BASE_URL . (string)$guest['profile_picture_path']) ?>">Open</a>
+                                        </div>
+                                    <?php endif; ?>
+
+                                    <?php if (trim((string)($guest['id_type'] ?? '')) !== '' || trim((string)($guest['id_number'] ?? '')) !== ''): ?>
+                                        <div><span class="text-gray-500">ID:</span> <span class="font-medium text-gray-900"><?= htmlspecialchars(trim((string)($guest['id_type'] ?? '') . ' ' . (string)($guest['id_number'] ?? ''))) ?></span></div>
+                                    <?php endif; ?>
+                                    <?php if (trim((string)($guest['id_photo_path'] ?? '')) !== ''): ?>
+                                        <div class="text-xs text-gray-500">
+                                            ID photo: <a class="text-blue-600 hover:underline" target="_blank" href="<?= htmlspecialchars($APP_BASE_URL . (string)$guest['id_photo_path']) ?>">Open</a>
+                                        </div>
+                                    <?php endif; ?>
+
+                                    <?php if (trim((string)($guest['preferences'] ?? '')) !== ''): ?>
+                                        <div>
+                                            <div class="text-gray-500 text-xs">Preferences</div>
+                                            <div class="text-sm text-gray-700"><?= nl2br(htmlspecialchars((string)$guest['preferences'])) ?></div>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if (trim((string)($guest['notes'] ?? '')) !== ''): ?>
+                                        <div>
+                                            <div class="text-gray-500 text-xs">Notes</div>
+                                            <div class="text-sm text-gray-700"><?= nl2br(htmlspecialchars((string)$guest['notes'])) ?></div>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
 
@@ -699,4 +799,4 @@ include __DIR__ . '/partials/sidebar.php';
         <?php endif; ?>
     </main>
 </section>
-<?php include __DIR__ . '/partials/page_end.php';
+<?php include __DIR__ . '/partials/page_end.php'; ?>

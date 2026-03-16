@@ -87,7 +87,30 @@ if (Request::isPost() && empty($errors) && $conn && $room) {
             $repoTmp = new ReservationRepository($conn);
             $promo = $repoTmp->findActivePromoByCode($promoCodeInput, date('Y-m-d'));
             if (!$promo) {
-                $errors['promo_code'] = 'Promo code is invalid or inactive.';
+                $alreadyUsed = false;
+                try {
+                    $stmt = $conn->prepare('SELECT id, code FROM promo_codes WHERE code = ? LIMIT 1');
+                    if ($stmt instanceof mysqli_stmt) {
+                        $stmt->bind_param('s', $promoCodeInput);
+                        $stmt->execute();
+                        $row = $stmt->get_result()->fetch_assoc();
+                        $stmt->close();
+                        if ($row) {
+                            $pid = (int)($row['id'] ?? 0);
+                            $pcode = (string)($row['code'] ?? $promoCodeInput);
+                            if ($pid > 0 && $repoTmp->guestHasRedeemedPromo($guestId, $pid, $pcode)) {
+                                $alreadyUsed = true;
+                            }
+                        }
+                    }
+                } catch (Throwable $e) {
+                }
+                $errors['promo_code'] = $alreadyUsed ? 'Promo code is already used' : 'Promo code is invalid or inactive.';
+            } else {
+                $pid = (int)($promo['id'] ?? 0);
+                if ($pid > 0 && $repoTmp->guestHasRedeemedPromo($guestId, $pid, (string)($promo['code'] ?? $promoCodeInput))) {
+                    $errors['promo_code'] = 'Promo code is already used';
+                }
             }
         }
     }

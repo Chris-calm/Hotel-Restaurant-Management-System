@@ -210,6 +210,19 @@ if (Request::isPost() && $conn && $hasReservations) {
                 if ($pid <= 0) {
                     $errors['promo_code'] = 'Promo code is invalid.';
                 } else {
+                    $guestIdForPromo = 0;
+                    $stmt = $conn->prepare('SELECT guest_id FROM reservations WHERE id = ? LIMIT 1');
+                    if ($stmt instanceof mysqli_stmt) {
+                        $stmt->bind_param('i', $reservationId);
+                        $stmt->execute();
+                        $row = $stmt->get_result()->fetch_assoc();
+                        $stmt->close();
+                        $guestIdForPromo = (int)($row['guest_id'] ?? 0);
+                    }
+                    if ($guestIdForPromo > 0 && $repo->guestHasRedeemedPromo($guestIdForPromo, $pid, (string)($promo['code'] ?? $promoInput))) {
+                        $errors['promo_code'] = 'Promo code is already used';
+                    }
+
                     $type = (string)($promo['discount_type'] ?? 'Percent');
                     $val = (float)($promo['discount_value'] ?? 0);
                     $discountAmount = 0.0;
@@ -220,13 +233,17 @@ if (Request::isPost() && $conn && $hasReservations) {
                     }
                     $discountAmount = max(0.0, min($staySubtotal, $discountAmount));
 
-                    $ok = $repo->updateReservationPromo($reservationId, $pid, (string)($promo['code'] ?? $promoInput), $discountAmount);
+                    if (!empty($errors)) {
+                        // promo blocked
+                    } else {
+                        $ok = $repo->updateReservationPromo($reservationId, $pid, (string)($promo['code'] ?? $promoInput), $discountAmount);
                     if (!$ok) {
                         $errors['promo_code'] = 'Failed to apply promo code.';
                     } else {
                         $repo->incrementPromoUsedCount($pid);
                         Flash::set('success', 'Promo code applied.');
                         Response::redirect('billing_payments.php?reservation_id=' . $reservationId);
+                    }
                     }
                 }
             }
