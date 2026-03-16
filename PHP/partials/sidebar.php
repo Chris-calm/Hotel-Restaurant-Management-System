@@ -4,6 +4,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 }
 
 require_once __DIR__ . '/../core/bootstrap.php';
+require_once __DIR__ . '/../rbac_middleware.php';
 $APP_BASE_URL = App::baseUrl();
 
 $currentUserProfilePic = $APP_BASE_URL . '/PICTURES/Ser.jpg';
@@ -12,6 +13,10 @@ $currentUserRole = $_SESSION['role'] ?? 'staff';
 
 $conn = Database::getConnection();
 $currentUserId = (int)($_SESSION['user_id'] ?? 0);
+$orderedModules = [];
+if ((string)$currentUserRole !== 'guest') {
+    $orderedModules = RBACMiddleware::getOrderedModules($conn, (string)$currentUserRole);
+}
 if ($conn && $currentUserId > 0) {
     try {
         $stmt = $conn->prepare("SELECT profile_picture FROM users WHERE id = ? LIMIT 1");
@@ -107,20 +112,21 @@ if ($conn && $currentUserId > 0) {
                     <i class='bx bx-chevron-down arrow'></i>
                 </a>
                 <ul class="dropdown-menu">
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/front_desk.php"><span class="text">Front Desk & Reception</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/reservations.php"><span class="text">Reservation & Booking</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/rooms/index.php"><span class="text">Rooms & Room Types</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/housekeeping_maintenance.php"><span class="text">Housekeeping & Maintenance</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/guests/index.php"><span class="text">Guests (CRM)</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/rooms/locks.php"><span class="text">Door Lock Integration</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/channel_management.php"><span class="text">Channel Management</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/marketing_promotions.php"><span class="text">Marketing & Promotions</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/analytics_reporting.php"><span class="text">Analytics & Reporting</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/events_conferences.php"><span class="text">Events & Conferences</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/billing_payments.php"><span class="text">Billing & Payments</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/pos.php"><span class="text">Point of Sale (POS)</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/inventory_stock.php"><span class="text">Inventory & Stock</span></a></li>
-                    <li><a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/loyalty_rewards.php"><span class="text">Loyalty & Rewards</span></a></li>
+                    <?php foreach ($orderedModules as $m): ?>
+                        <li>
+                            <a href="<?= htmlspecialchars((string)($m['url'] ?? '#')) ?>">
+                                <span class="text"><?= htmlspecialchars((string)($m['label'] ?? 'Module')) ?></span>
+                            </a>
+                        </li>
+                    <?php endforeach; ?>
+
+                    <?php if (RBACMiddleware::isAdminRole((string)$currentUserRole)): ?>
+                        <li>
+                            <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/module_manager.php">
+                                <span class="text">Module Manager</span>
+                            </a>
+                        </li>
+                    <?php endif; ?>
                 </ul>
             </li>
         </ul>

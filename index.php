@@ -9,6 +9,7 @@ $APP_BASE_URL = App::baseUrl();
 $hasUsersGuestIdColumn = false;
 $hasUser2faTable = false;
 $hasUserTrustedDevicesTable = false;
+$hasUsersActiveColumn = false;
 if (isset($conn) && $conn instanceof mysqli) {
     try {
         $dbRow = $conn->query('SELECT DATABASE()');
@@ -29,11 +30,17 @@ if (isset($conn) && $conn instanceof mysqli) {
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_trusted_devices'"
             );
             $hasUserTrustedDevicesTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $res = $conn->query(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'users' AND COLUMN_NAME = 'is_active'"
+            );
+            $hasUsersActiveColumn = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
         }
     } catch (Throwable $e) {
         $hasUsersGuestIdColumn = false;
         $hasUser2faTable = false;
         $hasUserTrustedDevicesTable = false;
+        $hasUsersActiveColumn = false;
     }
 }
 
@@ -51,9 +58,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     // Prepare statement to prevent SQL injection
     $stmt = $conn->prepare(
-        $hasUsersGuestIdColumn
-            ? "SELECT id, guest_id, username, password_hash, role, email FROM users WHERE username = ?"
-            : "SELECT id, username, password_hash, role, email FROM users WHERE username = ?"
+        ($hasUsersGuestIdColumn && $hasUsersActiveColumn)
+            ? "SELECT id, guest_id, username, password_hash, role, email, is_active FROM users WHERE username = ?"
+            : ($hasUsersGuestIdColumn
+                ? "SELECT id, guest_id, username, password_hash, role, email" . ($hasUsersActiveColumn ? ", is_active" : "") . " FROM users WHERE username = ?"
+                : ("SELECT id, username, password_hash, role, email" . ($hasUsersActiveColumn ? ", is_active" : "") . " FROM users WHERE username = ?"))
     );
     $stmt->bind_param("s", $username);
     $stmt->execute();
@@ -61,6 +70,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     if ($result->num_rows === 1) {
         $user = $result->fetch_assoc();
+
+        if ($hasUsersActiveColumn && (int)($user['is_active'] ?? 1) !== 1) {
+            $stmt->close();
+            $conn->close();
+            header("Location: index.php?deactivated=1");
+            exit();
+        }
         
         // Verify password using password_verify for hashed passwords
         $hash = (string)($user['password_hash'] ?? '');
@@ -70,9 +86,12 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 $_SESSION['guest_id'] = 0;
             }
 
-            $isGuest = ((string)($user['role'] ?? '') === 'guest');
+            $roleName = (string)($user['role'] ?? '');
+            $isGuest = ($roleName === 'guest');
+            $isAdmin = in_array($roleName, ['admin', 'superadmin'], true);
+            $needsTotp = !$isAdmin && $hasUser2faTable;
 
-            if ($isGuest && $hasUser2faTable) {
+            if ($needsTotp) {
                 $tStmt = $conn->prepare('SELECT totp_secret, enabled FROM user_2fa WHERE user_id = ? LIMIT 1');
                 $twofa = null;
                 if ($tStmt instanceof mysqli_stmt) {
@@ -517,6 +536,37 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
       transform: scale(1.1);
     }
 
+    .password-wrapper {
+      position: relative;
+    }
+
+    .password-wrapper input {
+      padding-right: 44px;
+    }
+
+    .password-toggle {
+      position: absolute;
+      top: 50%;
+      right: 12px;
+      transform: translateY(-50%);
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      padding: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #6b7280;
+    }
+
+    .password-toggle:hover {
+      color: #374151;
+    }
+
+    .password-toggle:focus {
+      outline: none;
+    }
+
     @media (max-width: 768px) {
       .login-container {
         flex-direction: column;
@@ -558,7 +608,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
           <div class="form-group">
             <label for="password">Password *</label>
-            <input type="password" id="password" name="password" placeholder="Enter your password" required>
+            <div class="password-wrapper">
+              <input type="password" id="password" name="password" placeholder="Enter your password" required>
+              <button type="button" id="togglePassword" class="password-toggle" aria-label="Show password" aria-pressed="false">
+                <svg id="eyeIcon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <button type="submit" class="btn-login">Sign In</button>
@@ -578,6 +636,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         <div class="error-message">
           <span>⚠️</span>
           <span>Invalid username or password. Please try again.</span>
+        </div>
+      <?php endif; ?>
+
+      <?php if (isset($_GET['deactivated'])): ?>
+        <div class="error-message">
+          <span>⛔</span>
+          <span>Your account is deactivated. Please contact the administrator.</span>
         </div>
       <?php endif; ?>
       
@@ -602,6 +667,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
   <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
   <script src="https://unpkg.com/trianglify@^4/dist/trianglify.bundle.js"></script>
   <script>
+    (function () {
+      var input = document.getElementById('password');
+      var btn = document.getElementById('togglePassword');
+      if (!input || !btn) return;
+
+      btn.addEventListener('click', function () {
+        var showing = input.type === 'text';
+        input.type = showing ? 'password' : 'text';
+        btn.setAttribute('aria-pressed', showing ? 'false' : 'true');
+        btn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      });
+    })();
+
     particlesJS('particles-js', {
       "particles": {
         "number": {

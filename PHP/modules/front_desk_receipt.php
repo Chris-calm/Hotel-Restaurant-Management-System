@@ -63,43 +63,55 @@ $APP_BASE_URL = App::baseUrl();
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @media print {
-            @page { size: A4 landscape; margin: 4mm; }
+            @page { size: A4 landscape; margin: 6mm; }
             html, body {
                 width: 100% !important;
-                height: auto !important;
+                height: 100% !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 overflow: visible !important;
             }
             #sidebar, nav, .no-print { display: none !important; }
             #content { margin-left: 0 !important; overflow: visible !important; height: auto !important; }
-            main { padding: 0 !important; width: 100% !important; overflow: visible !important; height: auto !important; }
+            main {
+                padding: 0 !important;
+                width: 100% !important;
+                overflow: visible !important;
+                height: auto !important;
+                display: flex !important;
+                justify-content: center !important;
+                align-items: center !important;
+                min-height: 100vh !important;
+            }
             .print-card {
                 border: none !important;
                 box-shadow: none !important;
                 width: 100% !important;
-                max-width: 260mm !important;
+                max-width: 265mm !important;
                 margin: 0 auto !important;
                 padding: 8px !important;
-                break-inside: avoid !important;
-                page-break-inside: avoid !important;
+                zoom: 0.86;
             }
-            .print-card * { break-inside: avoid !important; page-break-inside: avoid !important; }
-            .print-card .mb-6 { margin-bottom: 8px !important; }
-            .print-card .mb-4 { margin-bottom: 8px !important; }
-            .print-card .mt-6 { margin-top: 8px !important; }
-            .print-card .mt-4 { margin-top: 8px !important; }
+            body { background: #fff !important; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            .print-card { break-inside: avoid-page !important; page-break-inside: avoid !important; }
+            .print-card .grid { break-inside: auto !important; }
+
+            .print-card .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+            .print-card .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+
+            .print-card .mb-6 { margin-bottom: 6px !important; }
+            .print-card .mb-4 { margin-bottom: 6px !important; }
+            .print-card .mt-6 { margin-top: 6px !important; }
+            .print-card .mt-4 { margin-top: 6px !important; }
             .print-card .p-6 { padding: 8px !important; }
             .print-card .p-4 { padding: 8px !important; }
             .print-card .gap-4 { gap: 8px !important; }
-            .print-card .text-xs { font-size: 0.65rem !important; line-height: 0.85rem !important; }
+            .print-card .text-xs { font-size: 0.68rem !important; line-height: 0.9rem !important; }
             .print-card .text-sm { font-size: 0.78rem !important; line-height: 1.05rem !important; }
-            .print-card .text-lg { font-size: 0.92rem !important; line-height: 1.2rem !important; }
-            .print-card .text-2xl { font-size: 1.05rem !important; line-height: 1.35rem !important; }
-            .print-card { transform: scale(0.88); transform-origin: top center; }
-            .print-card .mt-2 { margin-top: 4px !important; }
-            .print-card div[style*="height:24px"] { height: 14px !important; }
-            body { background: #fff !important; }
+            .print-card .text-lg { font-size: 0.9rem !important; line-height: 1.18rem !important; }
+            .print-card .text-2xl { font-size: 1.02rem !important; line-height: 1.28rem !important; }
+            .print-card div[style*="height:24px"] { height: 16px !important; }
         }
 
         @media screen {
@@ -138,15 +150,15 @@ $APP_BASE_URL = App::baseUrl();
         ?>
 
         <div class="max-w-3xl mx-auto bg-white rounded-2xl border border-gray-100 p-6 md:p-8 print-card">
-            <div class="flex items-start justify-between gap-4 mb-6">
-                <div class="flex items-center gap-3">
+            <div class="flex items-start justify-between gap-4 mb-6 receipt-header">
+                <div class="flex items-center gap-3 receipt-header-left">
                     <img src="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/H.png" alt="Logo" style="width:42px;height:42px;" />
                     <div>
                         <div class="text-sm font-semibold text-gray-900">Hotel Management System</div>
                         <div class="text-xs text-gray-500">Reservation Confirmation</div>
                     </div>
                 </div>
-                <div class="text-right">
+                <div class="text-right receipt-header-right">
                     <div class="text-xs text-gray-500">Reference No</div>
                     <div class="text-lg font-semibold text-gray-900"><?= htmlspecialchars($reservation['reference_no'] ?? '') ?></div>
                     <div class="mt-2">
@@ -246,7 +258,7 @@ $APP_BASE_URL = App::baseUrl();
                         Thank you
                     </div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 signature-grid">
                     <div>
                         <div class="text-xs text-gray-500">Guest Signature</div>
                         <div class="mt-2 border-b border-gray-200" style="height:24px;"></div>

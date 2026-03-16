@@ -6,6 +6,7 @@ if (!isset($pendingApprovals)) {
 
 require_once __DIR__ . '/../core/bootstrap.php';
 require_once __DIR__ . '/functions.php';
+require_once __DIR__ . '/../rbac_middleware.php';
 $APP_BASE_URL = App::baseUrl();
 
 $currentUserProfilePic = $APP_BASE_URL . '/PICTURES/Ser.jpg';
@@ -171,9 +172,19 @@ $currentRole = (string)($_SESSION['role'] ?? 'staff');
         <div class="profile-header">
             <img src="<?= htmlspecialchars($currentUserProfilePic) ?>" alt="Profile">
             <div class="name"><?= htmlspecialchars($_SESSION['username'] ?? 'User') ?></div>
-            <div class="role"><?= htmlspecialchars($_SESSION['role'] ?? 'staff') ?></div>
+            <div class="role"><?= htmlspecialchars(ucwords(str_replace('_', ' ', (string)($_SESSION['role'] ?? 'staff')))) ?></div>
         </div>
         <div class="profile-menu">
+            <?php if (RBACMiddleware::isAdminRole((string)($_SESSION['role'] ?? 'staff'))): ?>
+                <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/module_manager.php">
+                    <i class='bx bx-grid-alt'></i>
+                    <span>Module Manager</span>
+                </a>
+                <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/modules/employees.php">
+                    <i class='bx bx-id-card'></i>
+                    <span>Employees</span>
+                </a>
+            <?php endif; ?>
             <a href="<?= htmlspecialchars($APP_BASE_URL) ?>/PHP/settings.php">
                 <i class='bx bx-cog'></i>
                 <span>Settings</span>
