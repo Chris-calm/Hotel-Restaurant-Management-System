@@ -28,6 +28,19 @@ $trustedDevicesCount = 0;
 $trustedDevicesHasUserAgent = false;
 $trustedDevicesHasLastUsedAt = false;
 
+$isAdminAuditViewer = in_array((string)($_SESSION['role'] ?? ''), ['admin', 'superadmin'], true);
+$hasAuditLogsTable = false;
+$auditLogs = [];
+
+$auditFilter = 'all';
+if ($isAdminAuditViewer) {
+    $f = (string)($_GET['audit_filter'] ?? 'all');
+    $allowed = ['all', 'admin', 'staff', 'guest', 'login'];
+    if (in_array($f, $allowed, true)) {
+        $auditFilter = $f;
+    }
+}
+
 if ($conn) {
     try {
         $dbRow = $conn->query('SELECT DATABASE()');
@@ -36,6 +49,9 @@ if ($conn) {
         if ($db !== '') {
             $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'users'");
             $hasUsers = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
+
+            $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'audit_logs'");
+            $hasAuditLogsTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
 
             $res = $conn->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{$db}' AND TABLE_NAME = 'user_2fa'");
             $hasUser2faTable = $res ? ((int)($res->fetch_row()[0] ?? 0) === 1) : false;
@@ -52,6 +68,48 @@ if ($conn) {
             }
         }
     } catch (Throwable $e) {
+    }
+}
+
+if ($conn && $isAdminAuditViewer && $hasAuditLogsTable) {
+    try {
+        $whereSql = '';
+        $types = '';
+        $params = [];
+
+        if ($auditFilter === 'admin') {
+            $whereSql = " WHERE actor_role IN ('admin','superadmin') ";
+        } elseif ($auditFilter === 'guest') {
+            $whereSql = ' WHERE actor_role = ? ';
+            $types = 's';
+            $params[] = 'guest';
+        } elseif ($auditFilter === 'staff') {
+            $whereSql = " WHERE actor_role IS NOT NULL AND actor_role <> '' AND actor_role NOT IN ('admin','superadmin','guest') ";
+        } elseif ($auditFilter === 'login') {
+            $whereSql = ' WHERE action LIKE ? ';
+            $types = 's';
+            $params[] = 'login_%';
+        }
+
+        $sql = 'SELECT id, actor_user_id, actor_role, target_user_id, action, ip, user_agent, details, created_at '
+            . 'FROM audit_logs'
+            . $whereSql
+            . ' ORDER BY id DESC LIMIT 50';
+
+        $stmt = $conn->prepare($sql);
+        if ($stmt instanceof mysqli_stmt) {
+            if ($types !== '' && !empty($params)) {
+                $stmt->bind_param($types, ...$params);
+            }
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $auditLogs[] = $row;
+            }
+            $stmt->close();
+        }
+    } catch (Throwable $e) {
+        $auditLogs = [];
     }
 }
 
@@ -791,6 +849,96 @@ include __DIR__ . '/partials/sidebar.php';
                                         <button class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 transition">Enable 2FA</button>
                                     </form>
                                 <?php endif; ?>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($isAdminAuditViewer): ?>
+                        <div id="audit-logs" class="bg-white rounded-xl border border-gray-100 p-6">
+                            <div class="flex items-start justify-between mb-4">
+                                <div>
+                                    <h3 class="text-lg font-medium text-gray-900">Audit Logs</h3>
+                                    <p class="text-xs text-gray-500 mt-1">Recent admin actions and login events</p>
+                                </div>
+                            </div>
+
+                            <div class="flex flex-wrap gap-2 mb-4">
+                                <?php
+                                    $base = 'settings.php#audit-logs';
+                                    $mk = function (string $key) use ($base): string {
+                                        return 'settings.php?audit_filter=' . urlencode($key) . '#audit-logs';
+                                    };
+                                    $btn = function (string $key, string $label) use ($auditFilter, $mk): void {
+                                        $active = $auditFilter === $key;
+                                        $cls = $active
+                                            ? 'bg-gray-900 text-white border-gray-900'
+                                            : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50';
+                                        echo '<a class="px-3 py-1.5 rounded-lg border text-xs font-medium transition ' . $cls . '" href="' . htmlspecialchars($mk($key)) . '">' . htmlspecialchars($label) . '</a>';
+                                    };
+                                    $btn('all', 'All');
+                                    $btn('admin', 'Admin / Superadmin');
+                                    $btn('staff', 'Staff');
+                                    $btn('guest', 'Guests');
+                                    $btn('login', 'Login Events');
+                                ?>
+                            </div>
+
+                            <?php if (!$hasAuditLogsTable): ?>
+                                <div class="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-900">
+                                    Audit logging is unavailable. Database table is missing.
+                                </div>
+                            <?php elseif (empty($auditLogs)): ?>
+                                <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-800">
+                                    No audit logs yet.
+                                </div>
+                            <?php else: ?>
+                                <div class="overflow-x-auto">
+                                    <table class="min-w-full text-sm">
+                                        <thead>
+                                            <tr class="text-left text-xs text-gray-500 border-b">
+                                                <th class="py-2 pr-4">Time</th>
+                                                <th class="py-2 pr-4">Action</th>
+                                                <th class="py-2 pr-4">Actor</th>
+                                                <th class="py-2 pr-4">Target</th>
+                                                <th class="py-2 pr-4">IP</th>
+                                                <th class="py-2 pr-4">Details</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($auditLogs as $log): ?>
+                                                <?php
+                                                    $detailsText = '';
+                                                    $rawDetails = (string)($log['details'] ?? '');
+                                                    if ($rawDetails !== '') {
+                                                        $decoded = json_decode($rawDetails, true);
+                                                        if (is_array($decoded)) {
+                                                            $pairs = [];
+                                                            foreach ($decoded as $k => $v) {
+                                                                if (is_scalar($v) || $v === null) {
+                                                                    $pairs[] = (string)$k . '=' . (string)($v ?? '');
+                                                                }
+                                                            }
+                                                            $detailsText = implode(' | ', $pairs);
+                                                        } else {
+                                                            $detailsText = $rawDetails;
+                                                        }
+                                                    }
+                                                    if (strlen($detailsText) > 140) {
+                                                        $detailsText = substr($detailsText, 0, 140) . '…';
+                                                    }
+                                                ?>
+                                                <tr class="border-b border-gray-100 align-top">
+                                                    <td class="py-2 pr-4 whitespace-nowrap text-gray-700"><?= htmlspecialchars((string)($log['created_at'] ?? '')) ?></td>
+                                                    <td class="py-2 pr-4 font-medium text-gray-900"><?= htmlspecialchars((string)($log['action'] ?? '')) ?></td>
+                                                    <td class="py-2 pr-4 text-gray-700"><?= htmlspecialchars(trim((string)($log['actor_role'] ?? '')) !== '' ? ((string)($log['actor_role'] ?? '') . ' #' . (string)($log['actor_user_id'] ?? '')) : (string)($log['actor_user_id'] ?? '')) ?></td>
+                                                    <td class="py-2 pr-4 text-gray-700"><?= htmlspecialchars((string)($log['target_user_id'] ?? '')) ?></td>
+                                                    <td class="py-2 pr-4 text-gray-700"><?= htmlspecialchars((string)($log['ip'] ?? '')) ?></td>
+                                                    <td class="py-2 pr-4 text-gray-600"><?= htmlspecialchars($detailsText) ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
                             <?php endif; ?>
                         </div>
                     <?php endif; ?>

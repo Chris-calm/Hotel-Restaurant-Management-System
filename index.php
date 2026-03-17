@@ -47,12 +47,24 @@ if (isset($conn) && $conn instanceof mysqli) {
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $username = trim($_POST['username']);
     $password = trim($_POST['password']);
+    $ip = (string)($_SERVER['REMOTE_ADDR'] ?? '');
 
     if (!isset($conn) || !$conn) {
         $_SESSION['user_id'] = 1;
         $_SESSION['username'] = $username !== '' ? $username : 'user';
         $_SESSION['role'] = 'staff';
         header("Location: PHP/Dashboard.php");
+        exit();
+    }
+
+    $lockRemaining = LoginThrottle::getLockRemainingSeconds($conn, $username, $ip);
+    if ($lockRemaining > 0) {
+        AuditLogger::log($conn, null, null, 'login_locked', null, [
+            'username' => $username,
+            'lock_remaining_seconds' => $lockRemaining,
+        ]);
+        $conn->close();
+        header('Location: index.php?locked=' . (int)$lockRemaining);
         exit();
     }
 
@@ -72,6 +84,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $user = $result->fetch_assoc();
 
         if ($hasUsersActiveColumn && (int)($user['is_active'] ?? 1) !== 1) {
+            AuditLogger::log($conn, (int)($user['id'] ?? 0), (string)($user['role'] ?? ''), 'login_deactivated', (int)($user['id'] ?? 0), [
+                'username' => (string)($user['username'] ?? ''),
+            ]);
             $stmt->close();
             $conn->close();
             header("Location: index.php?deactivated=1");
@@ -81,6 +96,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         // Verify password using password_verify for hashed passwords
         $hash = (string)($user['password_hash'] ?? '');
         if ($hash !== '' && password_verify($password, $hash)) {
+
+            LoginThrottle::clear($conn, $username, $ip);
+            AuditLogger::log($conn, (int)($user['id'] ?? 0), (string)($user['role'] ?? ''), 'login_success', (int)($user['id'] ?? 0), [
+                'username' => (string)($user['username'] ?? ''),
+            ]);
 
             if (isset($_SESSION['guest_id'])) {
                 $_SESSION['guest_id'] = 0;
@@ -131,6 +151,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     }
 
                     if (!$trustedOk) {
+                        AuditLogger::log($conn, (int)($user['id'] ?? 0), (string)($user['role'] ?? ''), 'login_2fa_required', (int)($user['id'] ?? 0), [
+                            'username' => (string)($user['username'] ?? ''),
+                        ]);
                         $_SESSION['pending_2fa_user_id'] = (int)$user['id'];
                         $stmt->close();
                         $conn->close();
@@ -232,11 +255,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         }
     }
     
+    // If authentication fails, record attempt before closing DB connection
+    $lockAfter = LoginThrottle::recordFailure($conn, $username, $ip);
+    AuditLogger::log($conn, null, null, 'login_failed', null, [
+        'username' => $username,
+        'locked_seconds' => $lockAfter,
+    ]);
+
     $stmt->close();
     $conn->close();
-    
-    // If authentication fails, redirect with error
-    header("Location: index.php?error=1");
+
+    if ($lockAfter > 0) {
+        header('Location: index.php?locked=' . (int)$lockAfter);
+    } else {
+        header("Location: index.php?error=1");
+    }
     exit();
 }
 ?>
@@ -645,6 +678,29 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
           <span>Your account is deactivated. Please contact the administrator.</span>
         </div>
       <?php endif; ?>
+
+      <?php if (isset($_GET['locked'])): ?>
+        <div class="error-message">
+          <span>⛔</span>
+          <?php
+            $locked = (int)($_GET['locked'] ?? 0);
+            $locked = $locked > 0 ? $locked : 0;
+            if ($locked > 60) {
+                $mins = (int)floor($locked / 60);
+                $mins = $mins > 0 ? $mins : 1;
+                $unit = $mins === 1 ? 'minute' : 'minutes';
+                $msg = $mins . ' ' . $unit;
+            } else {
+                $unit = $locked === 1 ? 'second' : 'seconds';
+                $msg = $locked . ' ' . $unit;
+            }
+          ?>
+          <span>
+            Too many failed attempts. Please try again in
+            <span id="lockoutTimer" data-seconds="<?= (int)$locked ?>"><?= htmlspecialchars($msg) ?></span>.
+          </span>
+        </div>
+      <?php endif; ?>
       
       <?php if (isset($_GET['otp_expired'])): ?>
         <div class="error-message">
@@ -678,6 +734,91 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         btn.setAttribute('aria-pressed', showing ? 'false' : 'true');
         btn.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
       });
+    })();
+
+    (function () {
+      var timerEl = document.getElementById('lockoutTimer');
+      if (!timerEl) return;
+
+      var lockedSeconds = parseInt(timerEl.getAttribute('data-seconds') || '0', 10);
+      if (!Number.isFinite(lockedSeconds) || lockedSeconds <= 0) return;
+
+      var storageKey = 'hs_lockout_until_ms';
+
+      var loginForm = document.querySelector('form[action="index.php"][method="POST"], form[action="index.php"][method="post"], form[action="./index.php"], form[action=""]');
+      if (loginForm) {
+        loginForm.addEventListener('submit', function () {
+          try { window.localStorage.removeItem(storageKey); } catch (e) {}
+          try {
+            var url = new URL(window.location.href);
+            url.searchParams.delete('locked');
+            window.history.replaceState({}, '', url.toString());
+          } catch (e) {}
+        });
+      }
+
+      var nowMs = Date.now();
+      var storedUntilMs = 0;
+      try {
+        storedUntilMs = parseInt(window.localStorage.getItem(storageKey) || '0', 10);
+        if (!Number.isFinite(storedUntilMs)) storedUntilMs = 0;
+      } catch (e) {
+        storedUntilMs = 0;
+      }
+
+      var candidateUntilMs = nowMs + (lockedSeconds * 1000);
+      var untilMs = storedUntilMs;
+      if (!untilMs || untilMs <= nowMs || candidateUntilMs > untilMs) {
+        untilMs = candidateUntilMs;
+        try {
+          window.localStorage.setItem(storageKey, String(untilMs));
+        } catch (e) {}
+      }
+
+      function remainingSeconds() {
+        return Math.max(0, Math.ceil((untilMs - Date.now()) / 1000));
+      }
+
+      function formatRemaining(secs) {
+        secs = Math.max(0, Math.floor(secs));
+        if (secs > 60) {
+          var mins = Math.floor(secs / 60);
+          mins = mins > 0 ? mins : 1;
+          return mins + ' ' + (mins === 1 ? 'minute' : 'minutes');
+        }
+        return secs + ' ' + (secs === 1 ? 'second' : 'seconds');
+      }
+
+      var remaining = remainingSeconds();
+      if (remaining <= 0) {
+        try { window.localStorage.removeItem(storageKey); } catch (e) {}
+        try {
+          var url = new URL(window.location.href);
+          url.searchParams.delete('locked');
+          window.location.replace(url.toString());
+        } catch (e) {
+          window.location.replace(window.location.pathname);
+        }
+        return;
+      }
+      timerEl.textContent = formatRemaining(remaining);
+
+      var interval = window.setInterval(function () {
+        remaining = remainingSeconds();
+        if (remaining <= 0) {
+          window.clearInterval(interval);
+          try { window.localStorage.removeItem(storageKey); } catch (e) {}
+          try {
+            var url = new URL(window.location.href);
+            url.searchParams.delete('locked');
+            window.location.replace(url.toString());
+          } catch (e) {
+            window.location.replace(window.location.pathname);
+          }
+          return;
+        }
+        timerEl.textContent = formatRemaining(remaining);
+      }, 1000);
     })();
 
     particlesJS('particles-js', {

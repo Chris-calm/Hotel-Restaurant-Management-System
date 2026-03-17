@@ -16,6 +16,9 @@ if (!RBACMiddleware::isAdminRole($role)) {
 $errors = [];
 $success = '';
 
+$actorUserId = (int)($_SESSION['user_id'] ?? 0);
+$actorRole = (string)($_SESSION['role'] ?? '');
+
 $editUserId = (int)Request::get('edit_user_id', 0);
 $action = (string)Request::post('action', '');
 
@@ -211,6 +214,13 @@ if (Request::isPost() && $action === 'create_employee') {
 
                 if (empty($errors)) {
                     $success = 'Employee created.';
+
+                    AuditLogger::log($conn, $actorUserId, $actorRole, 'employee_created', $newUserId, [
+                        'username' => $data['username'],
+                        'role' => $data['role'],
+                        'email' => $data['email'],
+                    ]);
+
                     $data = [
                         'username' => '',
                         'password' => '',
@@ -246,6 +256,10 @@ if (Request::isPost() && $conn && $action === 'toggle_active') {
                 $stmt->execute();
                 $stmt->close();
                 $success = $to === 1 ? 'Employee activated.' : 'Employee deactivated.';
+
+                AuditLogger::log($conn, $actorUserId, $actorRole, $to === 1 ? 'employee_activated' : 'employee_deactivated', $uid, [
+                    'to' => $to,
+                ]);
             } else {
                 $errors['general'] = 'Failed to update status.';
             }
@@ -275,6 +289,8 @@ if (Request::isPost() && $conn && $action === 'reset_password') {
                 $stmt->execute();
                 $stmt->close();
                 $success = 'Password reset.';
+
+                AuditLogger::log($conn, $actorUserId, $actorRole, 'employee_password_reset', $uid);
             } else {
                 $errors['general'] = 'Failed to reset password.';
             }
@@ -388,9 +404,15 @@ if (Request::isPost() && $conn && $action === 'save_employee') {
                 }
 
                 $success = 'Employee updated.';
+
+                AuditLogger::log($conn, $actorUserId, $actorRole, 'employee_updated', $uid, [
+                    'username' => $username,
+                    'role' => $urole,
+                    'email' => $email,
+                ]);
             }
         } catch (Throwable $e) {
-            $errors['general'] = 'Failed to update employee.';
+            $errors['general'] = 'Failed to save employee.';
         }
     }
 
@@ -410,8 +432,12 @@ if (Request::isPost() && $conn && $action === 'start_2fa') {
                 $stmt->execute();
                 $stmt->close();
                 $success = '2FA setup started.';
+
+                AuditLogger::log($conn, $actorUserId, $actorRole, 'employee_2fa_started', $uid);
             } else {
-                $errors['general'] = 'Failed to start 2FA.';
+                $success = '2FA secret generated. Ask employee to scan the QR and confirm with a code.';
+
+                AuditLogger::log($conn, $actorUserId, $actorRole, 'employee_2fa_started', $uid);
             }
         } catch (Throwable $e) {
             $errors['general'] = 'Failed to start 2FA.';
@@ -446,8 +472,10 @@ if (Request::isPost() && $conn && $action === 'confirm_2fa') {
                     $up->bind_param('i', $uid);
                     $up->execute();
                     $up->close();
-                    $success = '2FA enabled.';
                 }
+                $success = '2FA enabled.';
+
+                AuditLogger::log($conn, $actorUserId, $actorRole, 'employee_2fa_enabled', $uid);
             }
         } catch (Throwable $e) {
             $errors['general'] = 'Failed to confirm 2FA.';
@@ -466,6 +494,8 @@ if (Request::isPost() && $conn && $action === 'disable_2fa') {
                 $stmt->execute();
                 $stmt->close();
                 $success = '2FA disabled.';
+
+                AuditLogger::log($conn, $actorUserId, $actorRole, 'employee_2fa_disabled', $uid);
             }
         } catch (Throwable $e) {
             $errors['general'] = 'Failed to disable 2FA.';
@@ -484,6 +514,8 @@ if (Request::isPost() && $conn && $action === 'revoke_trusted') {
                 $stmt->execute();
                 $stmt->close();
                 $success = 'Trusted devices revoked.';
+
+                AuditLogger::log($conn, $actorUserId, $actorRole, 'employee_trusted_devices_revoked', $uid);
             }
         } catch (Throwable $e) {
             $errors['general'] = 'Failed to revoke trusted devices.';
